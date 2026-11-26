@@ -1,0 +1,5 @@
+node_modules/
+__pycache__/
+*.log
+# 実際のシフトデータ（バックアップ）を含めない
+*backup*.json

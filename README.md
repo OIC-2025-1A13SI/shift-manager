@@ -3,6 +3,8 @@
 アルバイト先へ半月ごとに提出する希望シフトを、タップ中心で作成してコピーする iPhone 向け PWA。
 仕様は [docs/shift_manager_design.md](docs/shift_manager_design.md)（v1.1、確認事項 Q01〜Q11 の回答を §11.1 に反映）を基準とする。
 
+公開URL：https://oic-2025-1a13si.github.io/shift-manager/ （GitHub Pages、`main` ブランチのルート）
+
 ## 構成
 
 ビルド不要の素の JavaScript（ES Modules、JSDoc で型注釈）＋ IndexedDB（Q01）。外部ライブラリ・外部送信・分析SDKなし。

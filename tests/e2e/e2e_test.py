@@ -1,10 +1,11 @@
-"""E2E受入テスト（ヘッドレスChrome、iPhone相当の画面サイズ）。
+"""E2E受入テスト v2（ヘッドレスChrome、iPhone相当の画面サイズ）。
 
 実行方法:
   1. プロジェクト直下で  python -m http.server 8080
   2. pip install playwright && playwright install chromium（初回のみ）
-  3. python tests/e2e/e2e_test.py  [--chrome /path/to/chrome]
+  3. python tests/e2e/e2e_test.py  [--chrome /path/to/chrome] [--base http://localhost:8080/]
 
+端末の日時は 2026-11-27 10:00（日本時間）に固定する。
 iPhone実機の Safari とは挙動が異なる部分（ホイールの操作感、共有シート、
 ホーム画面追加）は実機で確認すること。
 """
@@ -15,10 +16,11 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright, expect
 
-BASE = 'http://localhost:8080/'
+BASE = sys.argv[sys.argv.index('--base') + 1] if '--base' in sys.argv else 'http://localhost:8080/'
 OUT = Path(tempfile.gettempdir()) / 'shift-manager-e2e'
 OUT.mkdir(exist_ok=True)
 results = []
+CLEANUP = []
 
 
 def check(tid, name, fn):
@@ -26,11 +28,13 @@ def check(tid, name, fn):
         fn()
         results.append((tid, name, 'PASS', ''))
     except Exception as e:  # noqa: BLE001
-        results.append((tid, name, 'FAIL', ' | '.join(str(e).splitlines()[:8])[:900]))
+        results.append((tid, name, 'FAIL', ' | '.join(str(e).splitlines()[:6])[:700]))
+        for c in CLEANUP:  # 失敗したテストの画面を閉じて、次のテストに影響させない
+            c()
 
 
-def day(page, n):
-    return page.locator(f'.day[data-date$="-{n:02d}"]')
+def cell(page, date):
+    return page.locator(f'.cal-cell[data-date="{date}"]')
 
 
 def clipboard(page):
@@ -38,9 +42,7 @@ def clipboard(page):
 
 
 def main():
-    chrome = None
-    if '--chrome' in sys.argv:
-        chrome = sys.argv[sys.argv.index('--chrome') + 1]
+    chrome = sys.argv[sys.argv.index('--chrome') + 1] if '--chrome' in sys.argv else None
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path=chrome) if chrome else p.chromium.launch()
         ctx = browser.new_context(
@@ -51,282 +53,373 @@ def main():
         page = ctx.new_page()
         errors = []
         page.on('pageerror', lambda e: errors.append(str(e)))
-        page.clock.set_fixed_time('2026-12-20T10:00:00+09:00')
+        page.clock.set_fixed_time('2026-11-27T10:00:00+09:00')
         page.goto(BASE)
+        CLEANUP.append(lambda: page.screenshot(path=OUT / f'fail_{len(results)}.png'))
+        CLEANUP.append(lambda: page.evaluate(
+            "document.querySelectorAll('.page-overlay,.sheet,.backdrop,.dialog-layer').forEach(e => e.remove());"
+            "document.querySelector('.tabbar [data-tab=\"hope\"]').click()"))
 
-        # ---- S01 ----
-        def t04():
-            rows = page.locator('[data-action="period"]')
-            expect(rows).to_have_count(4)
-            keys = [rows.nth(i).get_attribute('data-key') for i in range(4)]
-            assert keys == ['2026-12-first', '2026-12-second', '2027-01-first', '2027-01-second'], keys
-            expect(page.locator('.section-header').nth(1)).to_contain_text('翌月　2027年1月')
-        check('T04', '12月起動時の翌月が翌年1月', t04)
-        page.screenshot(path=OUT / '01_period.png')
+        def show_dec():
+            for _ in range(24):
+                y = int(page.locator('.month-title .y').inner_text())
+                m = int(page.locator('.month-title .m').inner_text())
+                diff = (2026 * 12 + 12) - (y * 12 + m)
+                if diff == 0:
+                    return
+                page.click('[data-action="next"]' if diff > 0 else '[data-action="prev"]')
+            raise AssertionError('12月を表示できません')
 
-        def t02():
-            page.click('[data-key="2026-12-second"]')
-            expect(page.locator('.day')).to_have_count(16)
-            expect(page.locator('.day').last).to_have_attribute('data-date', '2026-12-31')
-            page.click('[data-action="back"]')
-        check('T02', '12月後半は16〜31日', t02)
-
-        def t01():
-            page.click('[data-key="2026-12-first"]')
-            expect(page.locator('.day')).to_have_count(15)
-            expect(day(page, 1)).to_contain_text('火')
-            assert 'selected' in day(page, 1).get_attribute('class')  # Q03 初日を選択
-        check('T01', '12月前半: 1〜15日、1日は火曜、初日を選択', t01)
-
-        # ---- S03 ----
-        def open_sheet():
-            page.click('[data-action="add"]')
+        def add_btn():
+            page.locator('.day-panel [data-action="add"], .list-add [data-action="add"]').first.click()
             expect(page.locator('.sheet')).to_be_visible()
 
-        def t05():
-            open_sheet()
-            wheel = page.locator('[data-col="start"] .wheel-item')
-            expect(wheel).to_have_count(41)
-            assert wheel.first.inner_text() == '10:00' and wheel.last.inner_text() == '30:00'
-            page.screenshot(path=OUT / '03_sheet.png')
-        check('T05', 'ホイール41候補 10:00〜30:00', t05)
+        def new_entry():
+            add_btn()
+            page.click('[data-sh="new"]')
+            expect(page.locator('.page-overlay')).to_be_visible()
 
-        def t06_t12():
-            start = page.locator('[data-col="start"] .wheel-vp')
-            start.focus()
-            start.press('ArrowUp')  # 19:00 → 18:30
-            expect(page.get_by_test_id('sheet-output')).to_have_text('18:30-23')
-            page.click('[data-sheet="apply"]')
-            expect(page.locator('.sheet')).to_have_count(0)
-            expect(day(page, 1)).to_contain_text('18:30-23')
-            assert 'selected' in day(page, 2).get_attribute('class')
-        check('T06/T12', '18:30-23 を適用し翌日へ移動', t06_t12)
+        def wheel(side, col, key, times):
+            # col: 0=時, 1=分
+            vp = page.locator(f'[data-slot="{side}"] .wheel-vp').nth(col)
+            vp.focus()
+            vp.press(key, delay=0) if times == 1 else [vp.press(key) for _ in range(times)]
 
-        def t07():
-            open_sheet()
-            end = page.locator('[data-col="end"] .wheel-vp')
-            end.focus()
-            for _ in range(14):
-                end.press('ArrowDown')  # 23:00 → 30:00
-            start = page.locator('[data-col="start"] .wheel-vp')
-            start.focus()
-            start.press('ArrowDown')  # Q11: 直前使用の 18:30 から → 19:00
-            expect(page.get_by_test_id('sheet-output')).to_have_text('19-30')
-            end.focus()
-            end.press('ArrowDown')  # 30:30 は存在しない
-            expect(page.get_by_test_id('sheet-output')).to_have_text('19-30')
-            page.click('[data-sheet="apply"]')
-            expect(day(page, 2)).to_contain_text('19-30')
-        check('T07/Q11', '19-30（30:30なし、初期値は直前使用）', t07)
+        def open_chip(side):
+            page.click(f'[data-ed="chip"][data-key="{side}"]')
+            expect(page.locator(f'[data-slot="{side}"] .time-picker')).to_be_visible()
 
-        def t08_t11():
-            open_sheet()
-            start = page.locator('[data-col="start"] .wheel-vp')
-            end = page.locator('[data-col="end"] .wheel-vp')
-            # 開始=終了: 19:00-30:00 の終了を 19:00 まで上げる
-            end.focus()
-            for _ in range(22):
-                end.press('ArrowUp')
-            expect(page.get_by_test_id('sheet-error')).to_be_visible()
-            expect(page.locator('[data-sheet="apply"]')).to_be_disabled()
-            end.press('ArrowUp')  # 開始 > 終了
-            expect(page.locator('[data-sheet="apply"]')).to_be_disabled()
-            page.click('[data-col="start"] [data-mode="none"]')
-            page.click('[data-col="end"] [data-mode="none"]')
-            expect(page.locator('[data-sheet="apply"]')).to_be_disabled()  # T11
-            page.click('[data-col="start"] [data-mode="open"]')
-            expect(page.locator('[data-sheet="apply"]')).to_be_disabled()  # Q06 OP-
-            page.click('[data-col="start"] [data-mode="none"]')
-            page.click('[data-col="end"] [data-mode="last"]')
-            expect(page.locator('[data-sheet="apply"]')).to_be_disabled()  # Q06 -LA
-            page.click('[data-sheet="cancel"]')
-            expect(page.locator('.sheet')).to_have_count(0)
-            assert 'selected' in day(page, 3).get_attribute('class')  # 取消で何も変わらない
-        check('T08/T11/Q06', '不正な組み合わせは適用不可', t08_t11)
+        # ---- 起動 ----
+        def start():
+            expect(page.locator('.month-title')).to_contain_text('2026')
+            expect(page.locator('.month-title .m')).to_have_text('11')
+            assert 'selected' in cell(page, '2026-11-27').get_attribute('class')
+            expect(page.locator('.cal-cell')).to_have_count(35)
+            expect(page.locator('.day-band')).to_contain_text('2026年11月27日 (金)')
+            expect(page.locator('.tabbar [data-tab="hope"]')).to_have_class('on')
+        check('V2-01', '起動で今月カレンダー・今日を選択（R06変更）', start)
+        page.screenshot(path=OUT / 'v2_01_calendar.png')
 
-        def apply_combo(start_mode, end_mode, expected):
-            open_sheet()
-            page.click(f'[data-col="start"] [data-mode="{start_mode}"]')
-            page.click(f'[data-col="end"] [data-mode="{end_mode}"]')
-            expect(page.get_by_test_id('sheet-output')).to_have_text(expected)
-            page.click('[data-sheet="apply"]')
+        def months():
+            page.click('[data-action="next"]')
+            expect(page.locator('.month-title .m')).to_have_text('12')
+            expect(cell(page, '2026-12-01')).to_be_visible()
+            assert 'out' not in cell(page, '2026-12-01').get_attribute('class')
+            assert 'out' in cell(page, '2026-11-29').get_attribute('class')
+            page.click('[data-action="next"]')
+            expect(page.locator('.month-title')).to_contain_text('2027')
+            page.click('[data-action="today"]')
+            expect(page.locator('.month-title .m')).to_have_text('11')
+        check('T01-T04', '月の移動（年またぎ）と今日へ戻る', months)
 
-        def t09_t10():
-            page.click('.day[data-date$="-03"]')
-            apply_combo('open', 'time', 'OP-30')
-            expect(day(page, 3)).to_contain_text('OP-30')
-            apply_combo('time', 'last', '19-LA')
-            apply_combo('open', 'last', 'OP-LA')
-            apply_combo('time', 'none', '19-')
-            apply_combo('none', 'time', '-23')
-            page.click('[data-action="available"]')
-            page.click('[data-action="unavailable"]')
-            texts = [day(page, n).locator('.dval').inner_text() for n in range(4, 10)]
-            assert texts == ['19-LA', 'OP-LA', '19-', '-23', '○', '×'], texts
-            assert 'selected' in day(page, 10).get_attribute('class')
-        check('T09/T10', 'OP/LA・片側のみ・○×の出力', t09_t10)
-        page.screenshot(path=OUT / '02_main.png', full_page=False)
+        # ---- 入力画面（2列ホイール・1分刻み） ----
+        def editor():
+            page.click('[data-action="next"]')
+            cell(page, '2026-12-01').click()
+            new_entry()
+            open_chip('start')
+            expect(page.locator('[data-slot="start"] .wheel-vp').nth(0).locator('.wheel-item')).to_have_count(21)
+            expect(page.locator('[data-slot="start"] .wheel-vp').nth(1).locator('.wheel-item')).to_have_count(60)
+            wheel('start', 0, 'ArrowUp', 1)   # 19 → 18
+            wheel('start', 1, 'ArrowDown', 45)  # 00 → 45
+            expect(page.get_by_test_id('editor-output')).to_have_text('18:45-23')
+            page.screenshot(path=OUT / 'v2_03_editor.png')
+            page.click('[data-ed="done"]')
+            expect(page.locator('.page-overlay')).to_have_count(0)
+            expect(cell(page, '2026-12-01')).to_contain_text('18:45-23')
+            assert 'selected' in cell(page, '2026-12-02').get_attribute('class')
+        check('T06/T12', '1分刻みで18:45-23を入力し翌日へ', editor)
 
-        def t15():
-            page.click('.day[data-date$="-04"]')
-            page.click('[data-action="unavailable"]')
-            expect(day(page, 4)).to_contain_text('×')
-        check('T15', '入力済みの日付を確認なしで上書き', t15)
+        def editor_30():
+            new_entry()
+            open_chip('end')
+            wheel('end', 0, 'End', 1)  # 30時
+            expect(page.get_by_test_id('editor-output')).to_have_text('18:45-30')
+            wheel('end', 1, 'ArrowDown', 3)  # 30時を超えない
+            expect(page.get_by_test_id('editor-output')).to_have_text('18:45-30')
+            page.click('[data-ed="done"]')
+            expect(cell(page, '2026-12-02')).to_contain_text('18:45-30')
+        check('T05/T07', '30時まで、30:00を超えない', editor_30)
 
-        def t14():
+        def invalid():
+            new_entry()
+            open_chip('end')
+            wheel('end', 0, 'Home', 1)  # 10時 → 開始より前
+            expect(page.get_by_test_id('editor-error')).to_be_visible()
+            expect(page.locator('[data-ed="done"]')).to_be_disabled()
+            page.click('[data-ed="mode"][data-key="start"][data-mode="none"]')
+            page.click('[data-ed="mode"][data-key="end"][data-mode="none"]')
+            expect(page.locator('[data-ed="done"]')).to_be_disabled()  # T11
+            page.click('[data-ed="mode"][data-key="start"][data-mode="open"]')
+            expect(page.locator('[data-ed="done"]')).to_be_disabled()  # Q06 OP-
+            page.click('[data-ed="mode"][data-key="start"][data-mode="none"]')
+            page.click('[data-ed="mode"][data-key="end"][data-mode="last"]')
+            expect(page.locator('[data-ed="done"]')).to_be_disabled()  # Q06 -LA
+            page.click('[data-ed="close"]')
+            expect(page.locator('.page-overlay')).to_have_count(0)
+            assert 'selected' in cell(page, '2026-12-03').get_attribute('class')
+        check('T08/T11/Q06', '不正な組み合わせは完了できない', invalid)
+
+        def special(start_mode, end_mode, expected):
+            new_entry()
+            page.click(f'[data-ed="mode"][data-key="start"][data-mode="{start_mode}"]')
+            page.click(f'[data-ed="mode"][data-key="end"][data-mode="{end_mode}"]')
+            expect(page.get_by_test_id('editor-output')).to_have_text(expected)
+            page.click('[data-ed="done"]')
+
+        def specials():
+            special('open', 'last', 'OP-LA')     # 3日
+            special('time', 'none', '19-')       # 4日（直前の履歴がOP-LAなので開始は既定の19:00）
+            special('none', 'time', '-23')       # 5日（直前の履歴が19-なので終了は既定の23:00）
+            add_btn(); page.click('[data-sh="available"]')    # 6日
+            add_btn(); page.click('[data-sh="unavailable"]')  # 7日
+            vals = [cell(page, f'2026-12-0{d}').locator('.cal-val').inner_text() for d in range(3, 8)]
+            assert vals == ['OP-LA', '19-', '-23', '○', '×'], vals
+            assert 'selected' in cell(page, '2026-12-08').get_attribute('class')
+        check('T09/T10', 'OP/LA・片側のみ・○×', specials)
+        page.screenshot(path=OUT / 'v2_02_filled.png')
+
+        def history():
+            add_btn()
+            cards = page.locator('.hist-card .hist-main')
+            texts = [cards.nth(i).inner_text() for i in range(cards.count())]
+            assert any('OP-LA' in t for t in texts), texts
+            page.screenshot(path=OUT / 'v2_04_sheet.png')
+            page.locator('.hist-card').filter(has_text='OP-LA').locator('.hist-main').click()
+            expect(cell(page, '2026-12-08')).to_contain_text('OP-LA')
+            assert 'selected' in cell(page, '2026-12-09').get_attribute('class')
+            # 再使用で先頭へ（重複なし）
+            add_btn()
+            first = page.locator('.hist-card .hist-main').first.inner_text()
+            assert 'OP-LA' in first, first
+            n = page.locator('.hist-card').count()
+            # ピン留め：一番下をピン留めすると先頭に
+            last = page.locator('.hist-card').nth(n - 1)
+            last_text = last.locator('.hist-main').inner_text()
+            last.locator('.pin-btn').click()
+            expect(page.locator('.hist-card').first).to_have_class('hist-card pinned')
+            assert page.locator('.hist-card .hist-main').first.inner_text() == last_text
+            # 編集で削除してもシフトは残る
+            page.click('[data-sh="edit"]')
+            page.locator('.hist-card').filter(has_text='OP-LA').locator('.hist-main').click()
+            expect(page.locator('.hist-card').filter(has_text='OP-LA')).to_have_count(0)
+            page.click('[data-sh="edit"]')
+            page.locator('.backdrop').click(position={'x': 10, 'y': 10})
+            expect(cell(page, '2026-12-03')).to_contain_text('OP-LA')
+        check('T17/T19/ピン', '履歴の再使用・ピン留め・削除', history)
+
+        def overwrite_clear():
+            cell(page, '2026-12-07').click()
+            expect(page.locator('.day-entry')).to_contain_text('勤務不可')
+            add_btn()
+            page.click('[data-sh="available"]')
+            expect(cell(page, '2026-12-07')).to_contain_text('○')
+            cell(page, '2026-12-07').click()
+            add_btn()
+            page.click('[data-sh="clear"]')
+            expect(cell(page, '2026-12-07').locator('.cal-val')).to_have_count(0)
+            assert 'selected' in cell(page, '2026-12-07').get_attribute('class')
+        check('T15/T16', '上書き・未入力に戻す（留まる）', overwrite_clear)
+
+        def edit_existing():
+            cell(page, '2026-12-01').click()
+            page.click('.day-entry')
+            expect(page.locator('#editor-title')).to_have_text('シフトの編集')
+            expect(page.get_by_test_id('editor-output')).to_have_text('18:45-23')
+            page.click('[data-ed="close"]')
+        check('Q11', '入力済みの日は編集画面で現在の値を表示', edit_existing)
+
+        def bulk():
             page.click('[data-action="multi"]')
-            for n in (2, 5, 8):
-                day(page, n).click()
-            expect(page.get_by_test_id('editing')).to_contain_text('3日')
-            page.locator('.chip[data-action="history"]').first.click()
-            for n in (2, 5, 8):
-                expect(day(page, n).locator('.dval')).to_have_text('-23')
-            assert 'selected' in day(page, 9).get_attribute('class')
+            for d in ('2026-12-10', '2026-12-14', '2026-12-12'):
+                cell(page, d).click()
+            expect(page.locator('.day-band')).to_contain_text('3日を選択中')
+            add_btn()
+            expect(page.locator('.sheet-title')).to_have_text('3日にまとめて追加')
+            page.click('[data-sh="available"]')
+            for d in ('2026-12-10', '2026-12-14', '2026-12-12'):
+                expect(cell(page, d)).to_contain_text('○')
+            assert 'selected' in cell(page, '2026-12-13').get_attribute('class')
             expect(page.locator('[data-action="multi"]')).to_have_attribute('aria-pressed', 'false')
-        check('T14', '2・5・8日を一括設定→通常モードで9日', t14)
+        check('T14/Q02', '複数選択→最後にタップした日の翌日', bulk)
 
-        def t13():
-            day(page, 15).click()
-            page.click('[data-action="available"]')
-            assert 'selected' in day(page, 15).get_attribute('class')
-            expect(day(page, 15)).to_contain_text('○')
-        check('T13', '最終日に適用しても留まる', t13)
+        def month_end():
+            cell(page, '2026-12-31').click()
+            add_btn()
+            page.click('[data-sh="unavailable"]')
+            expect(page.locator('.month-title .m')).to_have_text('1')
+            assert 'selected' in cell(page, '2027-01-01').get_attribute('class')
+            page.click('[data-action="prev"]')
+        check('T13(v2)', '月末に入力すると翌月1日へ', month_end)
 
-        def t16():
-            day(page, 15).click()
-            page.click('[data-action="clear"]')
-            expect(day(page, 15)).to_contain_text('未入力')
-            expect(page.get_by_test_id('preview').locator('div').last).to_have_text('12月15日（火）　×')
-            assert 'missing' in page.get_by_test_id('preview').locator('div').last.get_attribute('class')
-            # Q05 一括取消
-            page.click('[data-action="multi"]')
-            day(page, 6).click(); day(page, 7).click()
-            page.click('[data-action="clear"]')
-            expect(day(page, 6)).to_contain_text('未入力')
-            expect(day(page, 7)).to_contain_text('未入力')
-            assert 'selected' in day(page, 7).get_attribute('class')
-        check('T16/Q05', '未入力に戻す（単日・一括）', t16)
+        def list_view():
+            page.click('[data-action="view-list"]')
+            expect(page.locator('.list-row')).to_have_count(31)
+            expect(page.locator('.list-row[data-date="2026-12-01"]')).to_contain_text('18:45')
+            page.screenshot(path=OUT / 'v2_05_list.png')
+            page.locator('.list-row[data-date="2026-12-15"]').click()
+            expect(page.locator('.sheet-title')).to_contain_text('12月15日')
+            page.click('[data-sh="unavailable"]')
+            expect(page.locator('.list-row[data-date="2026-12-15"]')).to_contain_text('勤務不可')
+            page.click('[data-action="view-calendar"]')
+            expect(cell(page, '2026-12-15')).to_contain_text('×')
+        check('LIST', 'リスト表示で入力', list_view)
 
-        def t17_t18_t19():
-            chips = page.locator('.chip[data-action="history"]')
-            before = [chips.nth(i).inner_text() for i in range(chips.count())]
-            day(page, 11).click()
-            chips.nth(2).click()
-            after = [chips.nth(i).inner_text() for i in range(chips.count())]
-            assert after[0] == before[2] and len(after) == len(before), (before, after)
-            # 編集モードで削除
-            page.click('[data-action="history-edit"]')
-            target = chips.first.inner_text()
-            chips.first.click()
-            page.click('[data-action="history-edit"]')
-            assert target not in [chips.nth(i).inner_text() for i in range(chips.count())]
-            expect(day(page, 11)).to_contain_text(target)  # T19
-        check('T17/T19', '履歴の再使用で先頭へ、削除してもシフトは残る', t17_t18_t19)
+        # ---- 曜日のいつもの ----
+        def templates():
+            page.click('.tabbar [data-tab="other"]')
+            page.click('[data-action="template"][data-wd="2"]')  # 火曜
+            page.click('[data-sh="new"]')
+            expect(page.locator('#editor-title')).to_have_text('火曜日のいつもの')
+            page.click('[data-ed="mode"][data-key="end"][data-mode="last"]')
+            expect(page.get_by_test_id('editor-output')).to_have_text('19-LA')  # 未登録の曜日は既定の19:00から
+            page.click('[data-ed="done"]')
+            expect(page.locator('[data-action="template"][data-wd="2"]')).to_contain_text('19-LA')
+            page.click('[data-action="template"][data-wd="6"]')  # 土曜
+            page.click('[data-sh="unavailable"]')
+            expect(page.locator('[data-action="template"][data-wd="6"]')).to_contain_text('×')
+            # まとめて入力（12月後半：火 22,29 / 土 19,26 のうち未入力のみ）
+            page.click('[data-action="fill"]')
+            page.click('.dialog-choices [data-key="2026-12-second"]')
+            expect(page.get_by_test_id('toast')).to_contain_text('4日を入力しました')
+            page.click('.tabbar [data-tab="hope"]')
+            expect(cell(page, '2026-12-22')).to_contain_text('19-LA')
+            expect(cell(page, '2026-12-19')).to_contain_text('×')
+            expect(cell(page, '2026-12-31')).to_contain_text('×')
+            # ワンタップ入力
+            cell(page, '2026-12-08').click()  # 火曜（入力済み OP-LA）
+            cell(page, '2026-12-01').click()
+            cell(page, '2026-12-29').click()  # 火曜（まとめて入力済み）
+            cell(page, '2026-12-16').click()  # 水曜
+            add_btn()
+            expect(page.locator('[data-sh="template"]')).to_have_count(0)
+            page.locator('.backdrop').click(position={'x': 10, 'y': 10})
+            cell(page, '2026-12-15').click()  # 火曜（×入力済み）
+            add_btn()
+            expect(page.locator('.sheet-label').first).to_have_text('火曜日のいつもの')
+            page.click('[data-sh="template"]')
+            expect(cell(page, '2026-12-15')).to_contain_text('19-LA')
+        check('TPL', '曜日のいつもの：登録・まとめて入力（未入力のみ）・ワンタップ', templates)
 
-        def t20():
+        # ---- LINEコピー ----
+        def copy_cancel():
             page.evaluate("navigator.clipboard.writeText('BEFORE')")
             page.click('[data-action="copy"]')
+            expect(page.locator('#copy-title')).to_have_text('LINE提出用コピー')
+            expect(page.locator('.period-chip[aria-checked="true"]')).to_have_text('12月前半')
+            page.screenshot(path=OUT / 'v2_06_copy.png')
+            page.click('[data-cp="copy"]')
             expect(page.locator('.dialog')).to_contain_text('未入力の日付が')
             page.get_by_test_id('copy-cancel').click()
-            expect(page.locator('.dialog')).to_have_count(0)
             assert clipboard(page) == 'BEFORE'
-        check('T20', '未入力ありでコピー→取消でクリップボード不変', t20)
+        check('T20', '未入力ありでコピー→取消', copy_cancel)
 
-        def t21():
-            page.click('[data-action="copy"]')
+        def copy_ok():
+            page.click('[data-cp="copy"]')
             page.get_by_test_id('copy-confirm').click()
             expect(page.get_by_test_id('toast')).to_have_text('コピーしました')
             text = clipboard(page)
             lines = text.split('\n')
             assert len(lines) == 15, lines
-            assert lines[0] == '12月1日（火）　18:30-23', lines[0]
-            assert lines[5] == '12月6日（日）　×'
-            expect(day(page, 6)).to_contain_text('未入力')
-            preview = page.get_by_test_id('preview').inner_text().strip()
-            assert preview == text, (preview, text)
-        check('T21', '承認で×に変換してコピー、内部は未入力のまま', t21)
+            assert lines[0] == '12月1日（火）　18:45-23', lines[0]
+            assert lines[1] == '12月2日（水）　18:45-30'
+            assert lines[6] == '12月7日（月）　×'
+            assert page.get_by_test_id('preview').inner_text().strip() == text
+        check('T21', '承認で×に変換してコピー（プレビューと一致）', copy_ok)
 
-        def t22():
-            page.click('[data-action="settings"]')
-            page.fill('#greet-prefix', 'お疲れ様です。\n12月前半の希望です。')
+        def greeting():
+            page.click('[data-cp="close"]')
+            page.click('.tabbar [data-tab="other"]')
+            page.fill('#greet-prefix', 'お疲れ様です。')
             page.fill('#greet-suffix', 'よろしくお願いします。')
             page.get_by_test_id('settings-greet').check()
-            page.click('[data-action="back"]')
-            expect(page.get_by_test_id('greet-toggle')).to_be_checked()
+            page.click('.tabbar [data-tab="hope"]')
             page.click('[data-action="copy"]')
+            page.click('.period-chip[data-key="2026-12-second"]')
+            page.click('[data-cp="copy"]')
             page.get_by_test_id('copy-confirm').click()
             expect(page.get_by_test_id('toast')).to_have_text('コピーしました')
             text = clipboard(page)
-            assert text.startswith('お疲れ様です。\n12月前半の希望です。\n12月1日（火）'), text[:40]
-            assert text.endswith('12月15日（火）　×\nよろしくお願いします。')
+            assert text.startswith('お疲れ様です。\n12月16日（水）'), text[:30]
+            assert text.endswith('\nよろしくお願いします。')
             assert page.get_by_test_id('preview').inner_text().strip() == text
             page.get_by_test_id('greet-toggle').uncheck()
-            page.click('[data-action="copy"]')
-            page.get_by_test_id('copy-confirm').click()
-            assert clipboard(page).startswith('12月1日'), 'OFFで挨拶文なし'
-        check('T22', '挨拶文の切替・編集でプレビューとコピーが一致', t22)
+            expect(page.get_by_test_id('preview')).not_to_contain_text('お疲れ様です')
+            page.click('[data-cp="close"]')
+        check('T22', '挨拶文の切替・編集でプレビューとコピーが一致', greeting)
 
-        def t23_t24_t25():
+        def reload():
             page.reload()
-            expect(page.locator('[data-action="period"]')).to_have_count(4)
-            expect(page.locator('[data-key="2026-12-first"]')).to_contain_text('入力済み')
-            page.click('[data-key="2026-12-first"]')
-            expect(day(page, 1)).to_contain_text('18:30-23')
-            assert 'selected' in day(page, 1).get_attribute('class')
-            expect(page.locator('.chip[data-action="history"]').first).to_be_visible()
-            page.click('[data-action="back"]')
-            page.click('[data-key="2027-01-first"]')
-            expect(page.locator('.day.missing')).to_have_count(15)
-            expect(day(page, 1)).to_contain_text('金')
-            page.click('[data-action="back"]')
-        check('T23/T24/T25', '再起動後に復元、コピー後もデータ残存、期間間で混在なし', t23_t24_t25)
+            show_dec()
+            expect(cell(page, '2026-12-01')).to_contain_text('18:45-23')
+            page.click('.tabbar [data-tab="other"]')
+            expect(page.locator('[data-action="template"][data-wd="2"]')).to_contain_text('19-LA')
+            page.click('.tabbar [data-tab="hope"]')
+        check('T23/T24', '再起動後に復元', reload)
 
-        backup_path = OUT / 'backup.json'
+        backup_path = OUT / 'backup_v2.json'
 
-        def t26():
-            page.click('[data-action="settings"]')
+        def backup():
+            page.click('.tabbar [data-tab="other"]')
             with page.expect_download() as dl:
                 page.click('[data-action="export"]')
             dl.value.save_as(backup_path)
             data = json.loads(backup_path.read_text(encoding='utf-8'))
-            assert data['app'] == 'shift-manager' and data['data']['schemaVersion'] == 1
-            assert data['data']['settings']['greetingPrefix'].startswith('お疲れ様です')
-            # データを変えてから復元
-            page.click('[data-action="back"]')
-            page.click('[data-key="2026-12-first"]')
-            day(page, 1).click()
-            page.click('[data-action="clear"]')
-            page.click('[data-action="settings"]')
+            assert data['data']['schemaVersion'] == 2
+            page.click('.tabbar [data-tab="hope"]')
+            show_dec()
+            cell(page, '2026-12-01').click()
+            add_btn()
+            page.click('[data-sh="clear"]')
+            page.click('.tabbar [data-tab="other"]')
             page.get_by_test_id('restore-file').set_input_files(str(backup_path))
-            expect(page.locator('.dialog')).to_contain_text('復元しますか')
             with page.expect_download() as pre:
                 page.get_by_test_id('restore-confirm').click()
             assert 'before-restore' in pre.value.suggested_filename
             expect(page.get_by_test_id('toast')).to_have_text('復元しました')
-            page.reload()
-            page.click('[data-key="2026-12-first"]')
-            expect(day(page, 1)).to_contain_text('18:30-23')
-            assert page.locator('.chip[data-action="history"]').count() >= 1
-            page.click('[data-action="settings"]')
-            expect(page.locator('#greet-suffix')).to_have_value('よろしくお願いします。')
-        check('T26', 'JSON書出し・復元で希望・履歴・設定を保持', t26)
+            page.click('.tabbar [data-tab="hope"]')
+            show_dec()
+            expect(cell(page, '2026-12-01')).to_contain_text('18:45-23')
+        check('T26', 'バックアップ書き出し・復元', backup)
 
-        def t27():
+        def v1_restore():
+            rng = {'kind': 'range', 'start': {'kind': 'time', 'minutes': 1140}, 'end': {'kind': 'time', 'minutes': 1380}}
+            v1 = {'app': 'shift-manager', 'format': 1, 'exportedAt': '2026-11-26T00:00:00Z', 'data': {
+                'schemaVersion': 1,
+                'requests': {'2026-12-05': {'shift': rng, 'updatedAt': '2026-11-26T00:00:00Z'}},
+                'history': [], 'periods': {},
+                'settings': {'greetingEnabled': False, 'greetingPrefix': '', 'greetingSuffix': ''}}}
+            f = OUT / 'v1.json'
+            f.write_text(json.dumps(v1), encoding='utf-8')
+            page.click('.tabbar [data-tab="other"]')
+            page.get_by_test_id('restore-file').set_input_files(str(f))
+            with page.expect_download():
+                page.get_by_test_id('restore-confirm').click()
+            expect(page.get_by_test_id('toast')).to_have_text('復元しました')
+            page.click('.tabbar [data-tab="hope"]')
+            show_dec()
+            expect(cell(page, '2026-12-05')).to_contain_text('19-23')
+            expect(cell(page, '2026-12-01').locator('.cal-val')).to_have_count(0)
+        check('MIG', 'v1のバックアップをv2で復元できる', v1_restore)
+
+        def broken():
             bad = OUT / 'broken.json'
             bad.write_text('{"app":"shift-manager", broken', encoding='utf-8')
+            page.click('.tabbar [data-tab="other"]')
             page.get_by_test_id('restore-file').set_input_files(str(bad))
             expect(page.get_by_test_id('toast')).to_contain_text('JSONとして読み込めません')
-            v9 = OUT / 'v9.json'
-            d = json.loads(backup_path.read_text(encoding='utf-8'))
-            d['data']['schemaVersion'] = 9
-            v9.write_text(json.dumps(d), encoding='utf-8')
-            page.get_by_test_id('restore-file').set_input_files(str(v9))
-            expect(page.get_by_test_id('toast')).to_contain_text('未対応のデータバージョン')
-            expect(page.locator('.dialog')).to_have_count(0)
-            page.click('[data-action="back"]')  # メイン画面から開いたのでメイン画面へ戻る
-            expect(page.locator('[data-screen="main"]')).to_be_visible()
-            expect(day(page, 1)).to_contain_text('18:30-23')
-        check('T27', '壊れたJSON・未対応バージョンはエラー、現データ保持', t27)
+            page.click('.tabbar [data-tab="hope"]')
+            show_dec()
+            expect(cell(page, '2026-12-05')).to_contain_text('19-23')
+        check('T27', '壊れたJSONはエラー、現データ保持', broken)
+
+        def placeholder():
+            page.click('.tabbar [data-tab="confirmed"]')
+            expect(page.locator('.empty-state')).to_contain_text('準備中')
+            page.click('.tabbar [data-tab="pay"]')
+            expect(page.locator('.empty-state')).to_contain_text('準備中')
+            page.click('.tabbar [data-tab="hope"]')
+        check('TAB', '確定シフト・給料計算タブは準備中表示', placeholder)
 
         def t30():
             page.evaluate("""() => {
@@ -334,62 +427,56 @@ def main():
               document.execCommand = () => false;
             }""")
             page.click('[data-action="copy"]')
+            page.click('[data-cp="copy"]')
             page.get_by_test_id('copy-confirm').click()
             expect(page.get_by_test_id('manual-copy')).to_be_visible()
-            assert page.get_by_test_id('manual-copy').input_value().startswith('12月1日')
             expect(page.get_by_test_id('toast')).to_have_count(0)
-            page.screenshot(path=OUT / '06_manual_copy.png')
             page.locator('.dialog-actions button').click()
-        check('T30', 'コピー失敗時は成功表示なし、手動コピーを提示', t30)
+            page.click('[data-cp="close"]')
+        check('T30', 'コピー失敗時は手動コピーを提示', t30)
 
         def t31():
             page.evaluate("""() => {
               IDBObjectStore.prototype.put = function () { throw new DOMException('QuotaExceededError', 'QuotaExceededError'); };
             }""")
-            day(page, 12).click()
-            page.click('[data-action="available"]')
+            show_dec()
+            cell(page, '2026-12-20').click()
+            add_btn()
+            page.click('[data-sh="available"]')
             expect(page.get_by_test_id('save-error')).to_contain_text('保存に失敗しました')
-            page.screenshot(path=OUT / '07_save_error.png')
-            page.reload()  # put の差し替えを解除
-            page.click('[data-key="2026-12-first"]')
-            expect(day(page, 12)).not_to_contain_text('○')
-            day(page, 12).click()
-            page.click('[data-action="available"]')
-            expect(page.get_by_test_id('save-error')).to_have_count(0)
+            page.reload()
+            show_dec()
+            expect(cell(page, '2026-12-20').locator('.cal-val')).to_have_count(0)
         check('T31', '保存失敗を通知し、保存済みと誤表示しない', t31)
 
-        def t28():
+        def dark():
             page.emulate_media(color_scheme='dark')
-            bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
-            assert bg == 'rgb(0, 0, 0)', bg
-            page.screenshot(path=OUT / '04_main_dark.png')
-            page.click('[data-action="add"]')
-            page.screenshot(path=OUT / '05_sheet_dark.png')
-            page.click('[data-sheet="cancel"]')
+            assert page.evaluate("getComputedStyle(document.body).backgroundColor") == 'rgb(0, 0, 0)'
+            page.screenshot(path=OUT / 'v2_07_dark.png')
+            add_btn()
+            page.screenshot(path=OUT / 'v2_08_sheet_dark.png')
+            page.locator('.backdrop').click(position={'x': 10, 'y': 10})
             page.emulate_media(color_scheme='light')
-            bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
-            assert bg == 'rgb(242, 242, 247)', bg
-        check('T28', 'ライト・ダークに追従（ブラウザーのエミュレーション）', t28)
+        check('T28', 'ライト・ダークに追従（エミュレーション）', dark)
 
-        def t29():
+        def offline():
             page.evaluate("navigator.serviceWorker.ready.then(() => true)")
             page.wait_for_function("navigator.serviceWorker.controller !== null", timeout=10000)
             ctx.set_offline(True)
             page.reload()
-            page.click('[data-key="2026-12-first"]')
-            day(page, 13).click()
-            page.click('[data-action="unavailable"]')
-            expect(day(page, 13)).to_contain_text('×')
-            expect(page.get_by_test_id('save-error')).to_have_count(0)
+            show_dec()
+            cell(page, '2026-12-21').click()
+            add_btn()
+            page.click('[data-sh="unavailable"]')
+            expect(cell(page, '2026-12-21')).to_contain_text('×')
+            page.wait_for_timeout(500)  # 端末への保存の完了を待ってから再起動する
             page.reload()
-            page.click('[data-key="2026-12-first"]')
-            expect(day(page, 13)).to_contain_text('×')
+            show_dec()
+            expect(cell(page, '2026-12-21')).to_contain_text('×')
             ctx.set_offline(False)
-        check('T29', 'オフラインで入力・保存・プレビュー（PC Chromeで確認）', t29)
+        check('T29', 'オフラインで入力・保存（PC Chrome）', offline)
 
-        def no_errors():
-            assert not errors, errors
-        check('-', 'ページ上のJavaScriptエラーなし', no_errors)
+        check('-', 'ページ上のJavaScriptエラーなし', lambda: (_ for _ in ()).throw(AssertionError(errors)) if errors else None)
         browser.close()
 
     width = max(len(r[0]) for r in results)

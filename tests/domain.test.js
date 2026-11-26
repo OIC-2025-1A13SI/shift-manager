@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   getPeriodDates, getPeriodCandidates, weekdayLabel, nextDateInPeriod, periodKey, isValidDateKey,
 } from '../src/domain/calendar.js';
-import { timeOptions, validateShift, setShift, clearShift, minutesToClock } from '../src/domain/shift.js';
+import { hourOptions, minuteOptions, clampTime, validateShift, setShift, clearShift, minutesToClock } from '../src/domain/shift.js';
 import { touchHistory, removeHistory } from '../src/domain/history.js';
 import { formatShift, buildSubmission, buildLines, countMissing } from '../src/domain/formatter.js';
 import { createDefaultAppData, validateAppData } from '../src/domain/appData.js';
@@ -52,13 +52,19 @@ test('曜日はタイムゾーンに依存しない', () => {
   assert.equal(isValidDateKey('2028-02-29'), true);
 });
 
-test('T05 ホイールは10:00〜30:00の41候補、30:30なし', () => {
-  const o = timeOptions();
-  assert.equal(o.length, 41);
-  assert.equal(o[0], 600);
-  assert.equal(o.at(-1), 1800);
-  assert.ok(!o.includes(1830));
+test('T05(v2) ホイールは時10〜30・分0〜59、30:00を超えない', () => {
+  assert.deepEqual([hourOptions()[0], hourOptions().at(-1), hourOptions().length], [10, 30, 21]);
+  assert.equal(minuteOptions().length, 60);
+  assert.equal(clampTime(30, 45), 1800);
+  assert.equal(clampTime(9, 59), 600);
   assert.equal(minutesToClock(1800), '30:00');
+  assert.equal(validateShift(range(t(H(19)), t(1801))).ok, false);
+});
+
+test('v2 1分刻みの書式: 分は00なら省略、それ以外は:MM', () => {
+  assert.equal(formatShift(range(t(H(18, 45)), t(H(23, 5)))), '18:45-23:05');
+  assert.equal(formatShift(range(t(H(10, 1)), LAST)), '10:01-LA');
+  assert.equal(validateShift(range(t(H(19, 15)), t(H(23)))).ok, true);
 });
 
 test('T06 18:30〜23:00 → 18:30-23', () => assert.equal(formatShift(range(t(H(18, 30)), t(H(23)))), '18:30-23'));
@@ -91,10 +97,10 @@ test('Q06 OP-、-LA は適用不可', () => {
   assert.equal(validateShift(range(NONE, LAST)).ok, false);
 });
 
-test('範囲外・刻み違いの時刻は不可', () => {
+test('範囲外・整数でない時刻は不可', () => {
   assert.equal(validateShift(range(t(570), t(H(12)))).ok, false);
   assert.equal(validateShift(range(t(H(19)), t(1830))).ok, false);
-  assert.equal(validateShift(range(t(H(19, 15)), t(H(23)))).ok, false);
+  assert.equal(validateShift(range(t(1140.5), t(H(23)))).ok, false);
 });
 
 test('T15/T16 上書きと未入力への復帰', () => {
@@ -124,6 +130,7 @@ test('T17 同じ履歴を再使用すると重複せず先頭へ', () => {
   assert.equal(formatShift(h[0].shift), '19-23');
   assert.equal(h[0].id, 'h1');
   assert.equal(h[0].lastUsedAt, '3');
+  assert.equal(h[0].pinned, false);
 });
 
 test('T18 11種類使うと最古の1件だけ削除され10件', () => {
@@ -172,8 +179,8 @@ test('未入力件数', () => {
 
 test('T26 バックアップの書き出し・読み込みで全データ保持', () => {
   const data = createDefaultAppData();
-  data.requests = setShift({}, ['2026-12-01', '2026-12-02'], range(OPEN, LAST), '2026-11-26T00:00:00.000Z');
-  data.history = touchHistory([], range(OPEN, LAST), '2026-11-26T00:00:00.000Z', () => 'id1');
+  data.hopes = setShift({}, ['2026-12-01', '2026-12-02'], range(OPEN, LAST), '2026-11-26T00:00:00.000Z');
+  data.hopeHistory = touchHistory([], range(OPEN, LAST), '2026-11-26T00:00:00.000Z', () => 'id1');
   data.periods = { '2026-12-first': { lastEditedAt: '2026-11-26T00:00:00.000Z' } };
   data.settings = { greetingEnabled: true, greetingPrefix: 'お疲れ様です', greetingSuffix: 'よろしく' };
   const { json, filename } = createBackup(data, new Date(2026, 10, 26, 11, 5, 9));
@@ -187,16 +194,16 @@ test('T27 壊れたJSON・未対応バージョン・不正値は拒否', () => 
   assert.equal(parseBackup('{oops', 5).ok, false);
   assert.equal(parseBackup(JSON.stringify({ app: 'other', format: 1, data: {} }), 10).ok, false);
   assert.equal(parseBackup(JSON.stringify({ app: 'shift-manager', format: 2, data: {} }), 10).ok, false);
-  const bad = { ...createDefaultAppData(), schemaVersion: 2 };
+  const bad = { ...createDefaultAppData(), schemaVersion: 3 };
   assert.equal(parseBackup(JSON.stringify({ app: 'shift-manager', format: 1, data: bad }), 10).ok, false);
   const badDate = createDefaultAppData();
-  badDate.requests = { '2027-02-29': { shift: { kind: 'available' }, updatedAt: '2026-11-26T00:00:00Z' } };
+  badDate.hopes = { '2027-02-29': { shift: { kind: 'available' }, updatedAt: '2026-11-26T00:00:00Z' } };
   assert.equal(validateAppData(badDate).ok, false);
   const badTime = createDefaultAppData();
-  badTime.requests = { '2026-12-01': { shift: range(t(1830), LAST), updatedAt: '2026-11-26T00:00:00Z' } };
+  badTime.hopes = { '2026-12-01': { shift: range(t(1830), LAST), updatedAt: '2026-11-26T00:00:00Z' } };
   assert.equal(validateAppData(badTime).ok, false);
   const badKind = createDefaultAppData();
-  badKind.requests = { '2026-12-01': { shift: { kind: 'maybe' }, updatedAt: '2026-11-26T00:00:00Z' } };
+  badKind.hopes = { '2026-12-01': { shift: { kind: 'maybe' }, updatedAt: '2026-11-26T00:00:00Z' } };
   assert.equal(validateAppData(badKind).ok, false);
   assert.equal(parseBackup('{}', 6 * 1024 * 1024).ok, false);
 });

@@ -1,7 +1,7 @@
 // @ts-check
 /** バックアップの書き出し形式と、復元ファイルの検証（設計書 §7.2、Q10）。 */
 
-import { validateAppData } from '../domain/appData.js';
+import { migrateAppData } from '../domain/appData.js';
 
 /** @typedef {import('../domain/types.js').AppData} AppData */
 
@@ -39,5 +39,5 @@ export function parseBackup(text, sizeBytes) {
     return { ok: false, errors: ['シフトマネージャーのバックアップファイルではありません'] };
   }
   if (obj.format !== BACKUP_FORMAT) return { ok: false, errors: [`未対応のバックアップ形式です（${String(obj.format)}）`] };
-  return validateAppData(obj.data);
+  return migrateAppData(obj.data); // v1 のバックアップも v2 に変換して読み込む
 }

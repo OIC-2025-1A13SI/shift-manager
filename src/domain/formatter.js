@@ -10,7 +10,7 @@ import { parseDateKey, weekdayLabel } from './calendar.js';
 
 export const UNSET_OUTPUT = '×';
 
-/** 分が00なら省略、30なら ":30"。24時超えはそのまま（19-30）。 @param {number} minutes */
+/** 分が00なら省略、それ以外は ":MM"（v2）。24時超えはそのまま（19-30）。 @param {number} minutes */
 export function formatMinutes(minutes) {
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;

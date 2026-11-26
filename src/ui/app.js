@@ -1,12 +1,14 @@
 // @ts-check
-/** 画面の切り替え、ダイアログ、トーストの描画（状態 → DOM） */
+/** タブの切り替え、ダイアログ、トーストの描画（状態 → DOM） */
 import { el, esc } from './dom.js';
-import { createPeriodScreen } from './screens/periodScreen.js';
-import { createMainScreen } from './screens/mainScreen.js';
-import { createSettingsScreen } from './screens/settingsScreen.js';
+import { createHopeScreen } from './screens/hopeScreen.js';
+import { createOtherScreen } from './screens/otherScreen.js';
+import { createPlaceholderScreen } from './screens/placeholderScreen.js';
 import { createDialog } from './components/dialogs.js';
+import { icons } from './icons.js';
 
 /** @typedef {import('../application/controller.js').State} State */
+/** @typedef {import('../application/controller.js').Tab} Tab */
 /** @typedef {ReturnType<typeof import('../application/controller.js').createController>} Controller */
 
 /**
@@ -15,13 +17,31 @@ import { createDialog } from './components/dialogs.js';
  * @param {{ now: () => Date, version: string }} opts
  */
 export function mountApp(mount, c, opts) {
-  /** @type {Record<State['screen'], { el: HTMLElement, update: (s: State) => void, onEnter?: () => void, onLeave?: () => void }>} */
+  /** @type {Record<Tab, { el: HTMLElement, update: (s: State) => void, onLeave?: () => void }>} */
   const screens = {
-    period: createPeriodScreen(c, opts.now),
-    main: createMainScreen(c),
-    settings: createSettingsScreen(c, opts.version),
+    hope: createHopeScreen(c, opts.now),
+    confirmed: createPlaceholderScreen('確定シフト', '確定シフトの入力は次の更新で使えるようになります。希望シフトを見ながら「希望どおり」ボタンなどで入力できるようにする予定です。'),
+    pay: createPlaceholderScreen('給料計算', '給料計算は確定シフトのあとに追加します。'),
+    other: createOtherScreen(c, opts.version),
   };
-  /** @type {State['screen'] | null} */
+  /** @type {[Tab, string, string][]} */
+  const tabs = [
+    ['hope', '希望シフト', icons.tabHope],
+    ['confirmed', '確定シフト', icons.tabConfirmed],
+    ['pay', '給料計算', icons.tabPay],
+    ['other', 'その他', icons.tabOther],
+  ];
+  const content = el(`<div class="app-content"></div>`);
+  const tabbar = el(`<nav class="tabbar" aria-label="タブ">${tabs
+    .map(([id, label, icon]) => `<button type="button" data-tab="${id}" aria-label="${label}">${icon}<span>${label}</span></button>`)
+    .join('')}</nav>`);
+  tabbar.addEventListener('click', (ev) => {
+    const b = /** @type {HTMLElement} */ (ev.target).closest('[data-tab]');
+    if (b instanceof HTMLElement) c.setTab(/** @type {Tab} */ (b.dataset.tab));
+  });
+  mount.replaceChildren(content, tabbar);
+
+  /** @type {Tab | null} */
   let current = null;
   /** @type {HTMLElement | null} */
   let dialog = null;
@@ -34,15 +54,19 @@ export function mountApp(mount, c, opts) {
   /** @param {State} s */
   function render(s) {
     if (!s.ready) return;
-    if (current !== s.screen) {
+    if (current !== s.tab) {
       if (current) screens[current].onLeave?.();
-      mount.replaceChildren(screens[s.screen].el);
-      current = s.screen;
-      screens[s.screen].update(s);
-      screens[s.screen].onEnter?.();
-    } else {
-      screens[s.screen].update(s);
+      content.replaceChildren(screens[s.tab].el);
+      current = s.tab;
+      window.scrollTo(0, 0);
+      tabbar.querySelectorAll('[data-tab]').forEach((b) => {
+        const on = /** @type {HTMLElement} */ (b).dataset.tab === s.tab;
+        b.classList.toggle('on', on);
+        if (on) b.setAttribute('aria-current', 'page');
+        else b.removeAttribute('aria-current');
+      });
     }
+    screens[s.tab].update(s);
     renderDialog(s);
     renderToast(s);
   }
@@ -74,7 +98,7 @@ export function mountApp(mount, c, opts) {
         actions: [{ label: '閉じる', style: 'strong', onClick: () => c.closeManualCopy() }],
       });
     } else if (s.restorePending) {
-      const n = Object.keys(s.restorePending.data.requests).length;
+      const n = Object.keys(s.restorePending.data.hopes).length;
       dialog = createDialog({
         title: 'バックアップから復元しますか？',
         message: `現在のデータはすべて置き換えられます（希望シフト${n}日分を含むバックアップ）。復元の前に、現在のデータを書き出します。`,

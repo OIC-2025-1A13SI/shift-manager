@@ -1,22 +1,32 @@
 // @ts-check
-/** S05 設定画面 */
+/** その他タブ（docs/v2_redesign.md §3.7。段階①：曜日のいつもの（希望）、まとめて入力、挨拶文、バックアップ、情報） */
 import { el, esc, delegate } from '../dom.js';
+import { WEEKDAYS, periodOptionsAround, periodShortLabel, periodKey, periodRangeLabel } from '../../domain/calendar.js';
+import { formatShift } from '../../domain/formatter.js';
+import { openAddSheet } from '../components/addSheet.js';
+import { openEntryEditor } from '../components/entryEditor.js';
+import { createDialog } from '../components/dialogs.js';
 
 /** @typedef {import('../../application/controller.js').State} State */
 /** @typedef {ReturnType<typeof import('../../application/controller.js').createController>} Controller */
 
 /** @param {Controller} c @param {string} version */
-export function createSettingsScreen(c, version) {
+export function createOtherScreen(c, version) {
   const root = el(`
-    <div class="screen" data-screen="settings">
-      <header class="navbar">
-        <span class="left"><button type="button" class="nav-btn" data-action="back"><span class="chev" aria-hidden="true">‹</span>戻る</button></span>
-        <h1>設定</h1>
-        <span class="right"></span>
-      </header>
-      <main class="page">
+    <div class="screen" data-screen="other">
+      <header class="navbar"><span class="left"></span><h1>その他</h1><span class="right"></span></header>
+      <main class="page settings-page">
         <div class="banners"></div>
-        <div class="section-header">挨拶文</div>
+
+        <div class="section-header">曜日のいつもの（希望シフト）</div>
+        <div class="group weekday-group"></div>
+        <p class="section-footer">日付をタップしたときに、その曜日の時間をワンタップで入れられます。</p>
+        <div class="group">
+          <button type="button" class="row link" data-action="fill">希望をいつもので埋める…</button>
+        </div>
+        <p class="section-footer">前半・後半を選ぶと、未入力の日だけを曜日のいつもので埋めます（入力済みの日は変えません）。</p>
+
+        <div class="section-header">挨拶文（LINE提出用コピー）</div>
         <div class="group">
           <label class="row"><span class="grow">挨拶文を付ける</span><span class="switch"><input type="checkbox" data-testid="settings-greet"></span></label>
           <div class="row row-col"><label for="greet-prefix">先頭文</label><textarea id="greet-prefix" data-field="greetingPrefix" rows="2" placeholder="例：お疲れ様です。希望シフトを提出します。"></textarea></div>
@@ -41,6 +51,7 @@ export function createSettingsScreen(c, version) {
     </div>`);
 
   const banners = /** @type {HTMLElement} */ (root.querySelector('.banners'));
+  const weekdayGroup = /** @type {HTMLElement} */ (root.querySelector('.weekday-group'));
   const toggle = /** @type {HTMLInputElement} */ (root.querySelector('[data-testid="settings-greet"]'));
   const fileInput = /** @type {HTMLInputElement} */ (root.querySelector('input[type=file]'));
   const areas = /** @type {HTMLTextAreaElement[]} */ ([...root.querySelectorAll('textarea')]);
@@ -74,11 +85,49 @@ export function createSettingsScreen(c, version) {
     }
   });
 
+  /** @param {number} wd */
+  function editTemplate(wd) {
+    const cur = c.getState().data.weekdayTemplates[String(wd)]?.hope ?? null;
+    const name = `${WEEKDAYS[wd]}曜日のいつもの`;
+    openAddSheet(c, {
+      title: `${name}を登録`,
+      template: null,
+      clearLabel: cur ? '登録を削除' : null,
+      onPick: (shift) => c.setHopeTemplate(wd, shift),
+      onClear: () => c.setHopeTemplate(wd, null),
+      onNew: () => openEntryEditor({
+        title: name,
+        targetLabel: `毎週${WEEKDAYS[wd]}曜日の希望`,
+        initial: cur && cur.kind === 'range' ? cur : null,
+        doneLabel: '登録する',
+        onDone: (shift) => c.setHopeTemplate(wd, shift),
+      }),
+    });
+  }
+
+  function chooseFillPeriod() {
+    const options = periodOptionsAround(c.getState().month);
+    const body = el(`<div class="dialog-choices">${options.map((p) => `
+      <button type="button" data-key="${periodKey(p)}">${p.year}年${esc(periodShortLabel(p))}<span>${esc(periodRangeLabel(p))}</span></button>`).join('')}</div>`);
+    const dlg = createDialog({
+      title: '希望をいつもので埋める',
+      message: '未入力の日だけを曜日のいつもので埋めます。',
+      body,
+      actions: [{ label: 'キャンセル', onClick: () => dlg.remove() }],
+    });
+    body.addEventListener('click', (ev) => {
+      const b = /** @type {HTMLElement} */ (ev.target).closest('button');
+      const p = options.find((o) => periodKey(o) === b?.dataset.key);
+      if (!p) return;
+      dlg.remove();
+      c.fillHopesFromTemplates(p);
+    });
+    document.body.appendChild(dlg);
+  }
+
   delegate(root, {
-    back: () => {
-      flushAll();
-      c.closeSettings();
-    },
+    template: (t) => editTemplate(Number(t.dataset.wd)),
+    fill: () => chooseFillPeriod(),
     export: () => {
       flushAll();
       c.exportBackup();
@@ -95,13 +144,16 @@ export function createSettingsScreen(c, version) {
         .filter(Boolean)
         .map((m) => `<div class="banner" role="alert">${esc(m)}</div>`)
         .join('');
-      // 入力中の欄は書き換えない
+      weekdayGroup.innerHTML = WEEKDAYS.map((w, i) => {
+        const t = s.data.weekdayTemplates[String(i)]?.hope;
+        return `<button type="button" class="row" data-action="template" data-wd="${i}">
+            <span class="grow wd-name ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}曜日</span>
+            <span class="sub ${t ? 'set' : ''}">${t ? esc(formatShift(t)) : '未登録'}</span><span class="chev" aria-hidden="true">›</span>
+          </button>`;
+      }).join('');
       for (const ta of areas) {
         if (document.activeElement !== ta && !timers.has(ta)) ta.value = s.data.settings[/** @type {'greetingPrefix' | 'greetingSuffix'} */ (ta.dataset.field)];
       }
-    },
-    onEnter() {
-      window.scrollTo(0, 0);
     },
     onLeave: flushAll,
   };

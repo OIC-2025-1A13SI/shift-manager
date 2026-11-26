@@ -71,6 +71,14 @@ export function createWheel(p) {
     get value() {
       return p.options[index];
     },
+    /** 値を外から変える（onChange は呼ばない） @param {number} v */
+    setValue(v) {
+      const i = p.options.indexOf(v);
+      if (i < 0 || i === index) return;
+      index = i;
+      mark(i);
+      scrollToIndex(i, true);
+    },
     /** 特殊指定中はホイールを隠して OP/LA/指定なし を表示 @param {string | null} label */
     setSpecial(label) {
       const wasDisabled = disabled;

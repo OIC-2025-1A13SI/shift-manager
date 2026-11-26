@@ -1,5 +1,5 @@
 // @ts-check
-/** 希望シフトの検証・設定・取消（設計書 §7.1、Q06）。 */
+/** 希望シフトの検証・設定・取消（設計書 §7.1、Q06、v2: 1分刻み）。 */
 
 /** @typedef {import('./types.js').Shift} Shift */
 /** @typedef {import('./types.js').TimeShift} TimeShift */
@@ -8,13 +8,23 @@
 
 export const MIN_MINUTES = 600; // 10:00
 export const MAX_MINUTES = 1800; // 30:00（翌朝6時）
-export const STEP_MINUTES = 30;
+export const STEP_MINUTES = 1; // v2: 1分刻み
 
-/** ホイールの候補（10:00〜30:00、30分刻み、41件） */
-export function timeOptions() {
+/** 時ホイールの候補（10〜30） */
+export function hourOptions() {
   const out = [];
-  for (let m = MIN_MINUTES; m <= MAX_MINUTES; m += STEP_MINUTES) out.push(m);
+  for (let h = MIN_MINUTES / 60; h <= MAX_MINUTES / 60; h++) out.push(h);
   return out;
+}
+
+/** 分ホイールの候補（0〜59） */
+export function minuteOptions() {
+  return Array.from({ length: 60 }, (_, i) => i);
+}
+
+/** 時・分を範囲内（10:00〜30:00）に収めた分数にする @param {number} h @param {number} m */
+export function clampTime(h, m) {
+  return Math.min(Math.max(h * 60 + m, MIN_MINUTES), MAX_MINUTES);
 }
 
 /** @param {unknown} m */

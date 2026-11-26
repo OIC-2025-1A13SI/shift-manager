@@ -1,19 +1,23 @@
 // @ts-check
 /**
- * アプリ状態管理・操作制御（設計書 §6）。
+ * アプリ状態管理・操作制御（v2）。
  * UI は状態を読み、操作はすべてこのコントローラー経由で行う。保存・クリップボード・ファイル保存は
  * 依存として注入するため、ブラウザーなしで単体テストできる。
  */
 
-import { getPeriodDates, nextDateInPeriod, periodKey } from '../domain/calendar.js';
+import {
+  addDays, getPeriodDates, monthOf, periodKey, periodOf, nextPeriod, todayKey, weekdayOf,
+} from '../domain/calendar.js';
 import { setShift, clearShift, validateShift } from '../domain/shift.js';
-import { touchHistory, removeHistory } from '../domain/history.js';
+import { touchHistory, removeHistory, togglePin } from '../domain/history.js';
 import { buildSubmission, buildLines, countMissing } from '../domain/formatter.js';
 import { createDefaultAppData, migrateAppData } from '../domain/appData.js';
+import { fillHopesFromTemplates } from '../domain/templates.js';
 import { createBackup, parseBackup } from '../infrastructure/backup.js';
 
 /** @typedef {import('../domain/types.js').AppData} AppData */
 /** @typedef {import('../domain/types.js').PeriodRef} PeriodRef */
+/** @typedef {import('../domain/types.js').MonthRef} MonthRef */
 /** @typedef {import('../domain/types.js').DateKey} DateKey */
 /** @typedef {import('../domain/types.js').Shift} Shift */
 /** @typedef {import('../domain/types.js').TimeShift} TimeShift */
@@ -27,20 +31,19 @@ import { createBackup, parseBackup } from '../infrastructure/backup.js';
  *   newId?: () => string,
  * }} Deps
  *
+ * @typedef {'hope' | 'confirmed' | 'pay' | 'other'} Tab
  * @typedef {{
  *   ready: boolean,
- *   screen: 'period' | 'main' | 'settings',
- *   settingsReturn: 'period' | 'main',
- *   period: PeriodRef | null,
- *   dates: DateKey[],
- *   selected: DateKey | null,
+ *   tab: Tab,
+ *   view: 'calendar' | 'list',
+ *   month: MonthRef,
+ *   selected: DateKey,
  *   multi: boolean,
  *   multiSelection: DateKey[],
- *   historyEditing: boolean,
  *   data: AppData,
  *   loadError: string | null,
  *   saveError: string | null,
- *   copyConfirm: { missing: number } | null,
+ *   copyConfirm: { missing: number, period: PeriodRef } | null,
  *   manualCopyText: string | null,
  *   restorePending: { data: AppData } | null,
  *   message: { id: number, text: string, kind: 'info' | 'error' } | null,
@@ -53,17 +56,16 @@ export function createController(deps) {
   const newId =
     deps.newId ?? (() => (globalThis.crypto?.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`));
 
+  const today = todayKey(now());
   /** @type {State} */
   let state = {
     ready: false,
-    screen: 'period',
-    settingsReturn: 'period',
-    period: null,
-    dates: [],
-    selected: null,
+    tab: 'hope',
+    view: 'calendar',
+    month: monthOf(today),
+    selected: today,
     multi: false,
     multiSelection: [],
-    historyEditing: false,
     data: createDefaultAppData(),
     loadError: null,
     saveError: null,
@@ -77,7 +79,6 @@ export function createController(deps) {
   let messageSeq = 0;
   /** 読み込みに失敗した保存データを上書きしないためのフラグ */
   let storageBlocked = false;
-  /** 保存は直列化する */
   let saveChain = Promise.resolve(true);
 
   /** @param {Partial<State>} patch */
@@ -116,15 +117,23 @@ export function createController(deps) {
     return persist();
   }
 
-  function touchPeriod(/** @type {'lastEditedAt' | 'lastCopiedAt'} */ field, /** @type {AppData} */ data) {
-    if (!state.period) return data;
-    const key = periodKey(state.period);
-    return { ...data, periods: { ...data.periods, [key]: { ...data.periods[key], [field]: now().toISOString() } } };
+  /** @param {AppData} data @param {DateKey[]} dates @param {'lastEditedAt' | 'lastCopiedAt'} field */
+  function touchPeriods(data, dates, field) {
+    const keys = new Set(dates.map((d) => periodKey(periodOf(d))));
+    const periods = { ...data.periods };
+    const ts = now().toISOString();
+    for (const k of keys) periods[k] = { ...periods[k], [field]: ts };
+    return { ...data, periods };
   }
 
+  /** 入力対象の日付（複数選択中は選んだ日、タップ順） */
   function targets() {
-    if (state.multi) return state.multiSelection;
-    return state.selected ? [state.selected] : [];
+    return state.multi ? state.multiSelection : [state.selected];
+  }
+
+  /** @param {DateKey} date */
+  function selectAndShow(date) {
+    return { selected: date, month: monthOf(date) };
   }
 
   const api = {
@@ -134,6 +143,7 @@ export function createController(deps) {
       listeners.add(fn);
       return () => listeners.delete(fn);
     },
+    notify,
 
     async init() {
       try {
@@ -143,8 +153,10 @@ export function createController(deps) {
           return;
         }
         const r = migrateAppData(raw);
-        if (r.ok) set({ ready: true, data: r.data });
-        else {
+        if (r.ok) {
+          set({ ready: true, data: r.data });
+          if (r.migratedFrom) persist(); // 新しい形式で保存し直す
+        } else {
           storageBlocked = true;
           set({ ready: true, loadError: `保存データが壊れているため読み込めませんでした：${r.errors[0]}` });
         }
@@ -153,55 +165,51 @@ export function createController(deps) {
       }
     },
 
-    // ---- 画面遷移 ----
-    /** @param {PeriodRef} period */
-    openPeriod(period) {
-      const dates = getPeriodDates(period);
-      set({
-        screen: 'main',
-        period,
-        dates,
-        selected: dates[0], // Q03: 常に初日
-        multi: false,
-        multiSelection: [],
-        historyEditing: false,
-      });
+    // ---- 画面 ----
+    /** @param {Tab} tab */
+    setTab(tab) {
+      set({ tab, multi: false, multiSelection: [] });
     },
-    backToPeriods() {
-      set({ screen: 'period', multi: false, multiSelection: [], historyEditing: false, copyConfirm: null });
+    /** @param {'calendar' | 'list'} view */
+    setView(view) {
+      set({ view });
     },
-    openSettings() {
-      set({ screen: 'settings', settingsReturn: state.screen === 'main' ? 'main' : 'period' });
+    /** @param {number} n 表示月を n か月ずらす */
+    moveMonth(n) {
+      const idx = state.month.year * 12 + state.month.month - 1 + n;
+      set({ month: { year: Math.floor(idx / 12), month: (idx % 12) + 1 } });
     },
-    closeSettings() {
-      set({ screen: state.settingsReturn === 'main' && state.period ? 'main' : 'period' });
+    goToday() {
+      set(selectAndShow(todayKey(now())));
     },
 
     // ---- 日付選択 ----
     /** @param {DateKey} date */
     tapDate(date) {
-      if (!state.dates.includes(date)) return;
       if (state.multi) {
+        if (monthOf(date).month !== state.month.month || monthOf(date).year !== state.month.year) return;
         const sel = state.multiSelection.includes(date)
           ? state.multiSelection.filter((d) => d !== date)
           : [...state.multiSelection, date];
         set({ multiSelection: sel });
       } else {
-        set({ selected: date });
+        set(selectAndShow(date));
       }
     },
     toggleMulti() {
       if (state.multi) set({ multi: false, multiSelection: [] });
-      else set({ multi: true, multiSelection: [], historyEditing: false });
+      else set({ multi: true, multiSelection: [] });
     },
+    targets,
 
-    // ---- 入力 ----
+    // ---- 希望シフトの入力 ----
     /**
-     * 選択中の日付へ希望を適用する（R12〜R14、Q02、Q04）。
+     * 選択中の日付へ希望を適用する（R12〜R14、Q02）。適用後は暦上の翌日へ移る（月をまたげば表示月も移る）。
+     * 一括のときは最後にタップした日の翌日。
      * @param {Shift} shift
-     * @returns {boolean} 適用できたか
+     * @returns {boolean}
      */
-    applyShift(shift) {
+    applyHope(shift) {
       const v = validateShift(shift);
       if (!v.ok) {
         notify(v.reason, 'error');
@@ -213,42 +221,74 @@ export function createController(deps) {
         return false;
       }
       const ts = now().toISOString();
-      let data = { ...state.data, requests: setShift(state.data.requests, dates, shift, ts) };
-      if (shift.kind === 'range') data.history = touchHistory(data.history, /** @type {TimeShift} */ (shift), ts, newId);
-      data = touchPeriod('lastEditedAt', data);
-
-      // Q02: 一括は最後にタップした日の翌日 / Q04: 通常は暦上の翌日 / R12: 末日は留まる
-      const base = dates[dates.length - 1];
-      const next = nextDateInPeriod(state.dates, base) ?? base;
-      set({ multi: false, multiSelection: [], selected: next });
+      let data = { ...state.data, hopes: setShift(state.data.hopes, dates, shift, ts) };
+      if (shift.kind === 'range') data.hopeHistory = touchHistory(data.hopeHistory, /** @type {TimeShift} */ (shift), ts, newId);
+      data = touchPeriods(data, dates, 'lastEditedAt');
+      set({ multi: false, multiSelection: [], ...selectAndShow(addDays(dates[dates.length - 1], 1)) });
       updateData(data);
       return true;
     },
     /** @param {string} historyId */
-    applyHistory(historyId) {
-      const h = state.data.history.find((x) => x.id === historyId);
-      if (h) api.applyShift(h.shift);
+    applyHopeHistory(historyId) {
+      const h = state.data.hopeHistory.find((x) => x.id === historyId);
+      return h ? api.applyHope(h.shift) : false;
+    },
+    /** 曜日のいつものを適用（選択日の曜日の型） */
+    applyHopeTemplate() {
+      const t = state.data.weekdayTemplates[String(weekdayOf(state.selected))]?.hope;
+      return t ? api.applyHope(t) : false;
     },
     /** 未入力に戻す（R15、Q05: 一括可・移動しない） */
-    clearSelected() {
+    clearHope() {
       const dates = targets();
       if (dates.length === 0) {
         notify('日付を選択してください', 'error');
         return false;
       }
-      const data = touchPeriod('lastEditedAt', { ...state.data, requests: clearShift(state.data.requests, dates) });
-      set({ multi: false, multiSelection: [], selected: dates[dates.length - 1] });
+      const data = touchPeriods({ ...state.data, hopes: clearShift(state.data.hopes, dates) }, dates, 'lastEditedAt');
+      set({ multi: false, multiSelection: [], ...selectAndShow(dates[dates.length - 1]) });
       updateData(data);
       return true;
     },
 
     // ---- 履歴 ----
-    toggleHistoryEditing() {
-      set({ historyEditing: !state.historyEditing });
+    /** @param {string} id */
+    deleteHopeHistory(id) {
+      updateData({ ...state.data, hopeHistory: removeHistory(state.data.hopeHistory, id) });
     },
     /** @param {string} id */
-    deleteHistory(id) {
-      updateData({ ...state.data, history: removeHistory(state.data.history, id) });
+    toggleHopeHistoryPin(id) {
+      updateData({ ...state.data, hopeHistory: togglePin(state.data.hopeHistory, id) });
+    },
+
+    // ---- 曜日のいつもの ----
+    /** @param {number} weekday 0=日 @param {Shift | null} shift */
+    setHopeTemplate(weekday, shift) {
+      if (shift && !validateShift(shift).ok) {
+        notify(/** @type {any} */ (validateShift(shift)).reason, 'error');
+        return false;
+      }
+      const key = String(weekday);
+      const templates = { ...state.data.weekdayTemplates };
+      const cur = { ...templates[key] };
+      if (shift) cur.hope = shift;
+      else delete cur.hope;
+      if (Object.keys(cur).length) templates[key] = cur;
+      else delete templates[key];
+      updateData({ ...state.data, weekdayTemplates: templates });
+      return true;
+    },
+    /** 期間の未入力の日を曜日のいつもので埋める @param {PeriodRef} period @returns {number} 埋めた日数 */
+    fillHopesFromTemplates(period) {
+      const dates = getPeriodDates(period);
+      const r = fillHopesFromTemplates(dates, state.data.hopes, state.data.weekdayTemplates, now().toISOString());
+      if (r.filled.length === 0) {
+        notify('埋められる日がありませんでした（未入力の日がないか、曜日のいつものが未登録です）');
+        return 0;
+      }
+      updateData(touchPeriods({ ...state.data, hopes: r.hopes }, r.filled, 'lastEditedAt'));
+      notify(`${r.filled.length}日を入力しました`);
+      return r.filled.length;
     },
 
     // ---- 設定 ----
@@ -261,28 +301,36 @@ export function createController(deps) {
       updateData({ ...state.data, settings: { ...state.data.settings, [field]: text } });
     },
 
-    // ---- プレビュー・コピー ----
-    previewLines() {
-      return buildLines(state.dates, state.data.requests);
+    // ---- LINE 提出用コピー ----
+    /** コピー画面の初期期間：今日を含む半月の次（提出先の期間） */
+    defaultCopyPeriod() {
+      return nextPeriod(periodOf(todayKey(now())));
     },
-    submissionText() {
-      return buildSubmission(state.dates, state.data.requests, state.data.settings);
+    /** @param {PeriodRef} period */
+    previewLines(period) {
+      return buildLines(getPeriodDates(period), state.data.hopes);
     },
-    missingCount() {
-      return countMissing(state.dates, state.data.requests);
+    /** @param {PeriodRef} period */
+    submissionText(period) {
+      return buildSubmission(getPeriodDates(period), state.data.hopes, state.data.settings);
     },
-    /** コピー（R19, R20）。未入力がある場合は確認を出す。 */
-    requestCopy() {
-      const missing = api.missingCount();
+    /** @param {PeriodRef} period */
+    missingCount(period) {
+      return countMissing(getPeriodDates(period), state.data.hopes);
+    },
+    /** コピー（R19, R20）。未入力がある場合は確認を出す。 @param {PeriodRef} period */
+    requestCopy(period) {
+      const missing = api.missingCount(period);
       if (missing > 0) {
-        set({ copyConfirm: { missing } });
+        set({ copyConfirm: { missing, period } });
         return Promise.resolve(false);
       }
-      return performCopy();
+      return performCopy(period);
     },
     confirmCopy() {
+      const c = state.copyConfirm;
       set({ copyConfirm: null });
-      return performCopy();
+      return c ? performCopy(c.period) : Promise.resolve(false);
     },
     cancelCopy() {
       set({ copyConfirm: null });
@@ -293,7 +341,6 @@ export function createController(deps) {
     dismissMessage() {
       set({ message: null });
     },
-    notify,
 
     // ---- バックアップ ----
     async exportBackup() {
@@ -303,8 +350,7 @@ export function createController(deps) {
       else if (r === 'failed') notify('バックアップを書き出せませんでした', 'error');
       return r;
     },
-    /** 復元ファイルを検証し、問題なければ確認待ちにする。不正なら現データは変更しない（T27）。
-     * @param {string} text @param {number} size */
+    /** @param {string} text @param {number} size */
     prepareRestore(text, size) {
       const r = parseBackup(text, size);
       if (!r.ok) {
@@ -336,9 +382,9 @@ export function createController(deps) {
     },
   };
 
-  /** クリップボード書き込みは await より前に呼ぶ（iOS のユーザー操作要件） */
-  function performCopy() {
-    const text = api.submissionText();
+  /** クリップボード書き込みは await より前に呼ぶ（iOS のユーザー操作要件） @param {PeriodRef} period */
+  function performCopy(period) {
+    const text = api.submissionText(period);
     const write = deps.writeClipboard(text);
     return write.then(
       (ok) => {
@@ -347,7 +393,7 @@ export function createController(deps) {
           return false;
         }
         notify('コピーしました');
-        updateData(touchPeriod('lastCopiedAt', state.data));
+        updateData(touchPeriods(state.data, [getPeriodDates(period)[0]], 'lastCopiedAt'));
         return true;
       },
       () => {

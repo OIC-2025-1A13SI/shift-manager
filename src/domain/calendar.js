@@ -93,6 +93,81 @@ export function getPeriodCandidates(now) {
   ];
 }
 
+/** 暦日を n 日ずらす @param {DateKey} key @param {number} n */
+export function addDays(key, n) {
+  const { year, month, day } = parseDateKey(key);
+  const d = new Date(Date.UTC(year, month - 1, day + n));
+  return toDateKey(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+}
+
+/** @param {Date} now */
+export function todayKey(now) {
+  return toDateKey(now.getFullYear(), now.getMonth() + 1, now.getDate());
+}
+
+/** @param {import('./types.js').MonthRef} m @param {number} n */
+export function addMonths(m, n) {
+  const idx = m.year * 12 + (m.month - 1) + n;
+  return { year: Math.floor(idx / 12), month: (idx % 12) + 1 };
+}
+
+/** @param {DateKey} key */
+export function monthOf(key) {
+  const { year, month } = parseDateKey(key);
+  return { year, month };
+}
+
+/**
+ * 月カレンダーのマス（日曜始まり、前後の月の日付を含む週単位）。
+ * @param {import('./types.js').MonthRef} m
+ * @returns {{ date: DateKey, inMonth: boolean }[]}
+ */
+export function monthGrid(m) {
+  const first = toDateKey(m.year, m.month, 1);
+  const start = addDays(first, -weekdayOf(first));
+  const last = toDateKey(m.year, m.month, daysInMonth(m.year, m.month));
+  const end = addDays(last, 6 - weekdayOf(last));
+  const cells = [];
+  for (let d = start; d <= end; d = addDays(d, 1)) cells.push({ date: d, inMonth: monthOf(d).month === m.month });
+  return cells;
+}
+
+/** @param {import('./types.js').MonthRef} m */
+export function monthDates(m) {
+  const out = [];
+  for (let d = 1; d <= daysInMonth(m.year, m.month); d++) out.push(toDateKey(m.year, m.month, d));
+  return out;
+}
+
+/** 日付を含む半月 @param {DateKey} key @returns {PeriodRef} */
+export function periodOf(key) {
+  const { year, month, day } = parseDateKey(key);
+  return { year, month, half: day <= 15 ? 'first' : 'second' };
+}
+
+/** 次の半月 @param {PeriodRef} p @returns {PeriodRef} */
+export function nextPeriod(p) {
+  if (p.half === 'first') return { ...p, half: 'second' };
+  const n = addMonths(p, 1);
+  return { ...n, half: 'first' };
+}
+
+/** 表示中の月の前月・当月・翌月の前半/後半（6候補） @param {import('./types.js').MonthRef} m @returns {PeriodRef[]} */
+export function periodOptionsAround(m) {
+  /** @type {PeriodRef[]} */
+  const out = [];
+  for (const n of [-1, 0, 1]) {
+    const mm = addMonths(m, n);
+    out.push({ ...mm, half: 'first' }, { ...mm, half: 'second' });
+  }
+  return out;
+}
+
+/** "12月前半" @param {PeriodRef} p */
+export function periodShortLabel(p) {
+  return `${p.month}月${p.half === 'first' ? '前半' : '後半'}`;
+}
+
 /**
  * 期間内での翌日。期間末日なら null（R12: 最終日は留まる）。
  * @param {DateKey[]} dates @param {DateKey} key

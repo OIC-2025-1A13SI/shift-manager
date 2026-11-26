@@ -1,6 +1,6 @@
 /* Service Worker：アプリ資産をキャッシュしてオフラインで使えるようにする。
  * 保存データ（IndexedDB）には触れない。ファイルを更新したら CACHE_VERSION を上げること。 */
-const CACHE_VERSION = 'shift-manager-v2.0.0';
+const CACHE_VERSION = 'shift-manager-v2.0.1';
 const ASSETS = [
   './',
   './index.html',
@@ -37,7 +37,12 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE_VERSION).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  // ブラウザーの HTTP キャッシュ（GitHub Pages は10分）に残った古いファイルを取り込まないよう、必ずサーバーから取り直す
+  event.waitUntil(
+    caches.open(CACHE_VERSION)
+      .then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener('activate', (event) => {

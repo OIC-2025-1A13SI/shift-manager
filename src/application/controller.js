@@ -341,12 +341,19 @@ export function createController(deps) {
       const prev = !state.multi ? state.data.confirmed[state.selected] : undefined;
       return api.applyConfirmed(makeConfirmed(h.shift, prev ?? {}));
     },
-    /** 曜日のいつもの（確定） */
+    /**
+     * 曜日のいつもの（希望と共通の型）から確定の時刻を作る。決まれば確定して { done: true }、
+     * 決まらなければ入力画面の初期値を返す。
+     * @returns {{ done: true } | { done: false, prefill: { start: number | null, end: number | null }, reason: string } | null}
+     */
     applyConfirmedTemplate() {
-      const t = state.data.weekdayTemplates[String(weekdayOf(state.selected))]?.confirmed;
-      if (!t) return false;
+      const t = state.data.weekdayTemplates[String(weekdayOf(state.selected))]?.hope;
+      const r = hopeToConfirmed(t, state.data.pay);
+      if (!r) return null;
+      if (!r.ok) return { done: false, prefill: { start: r.start, end: r.end }, reason: r.reason };
       const prev = state.data.confirmed[state.selected];
-      return api.applyConfirmed(makeConfirmed(t, prev ?? {}));
+      api.applyConfirmed(makeConfirmed({ start: r.start, end: r.end, breakMinutes: prev?.breakMinutes ?? 0 }, prev ?? {}));
+      return { done: true };
     },
     /**
      * 「希望どおり」。単日：時刻が決まれば確定し true、決まらなければ入力画面の初期値を返す。
@@ -405,25 +412,6 @@ export function createController(deps) {
     toggleConfirmedHistoryPin(id) {
       updateData({ ...state.data, confirmedHistory: togglePin(state.data.confirmedHistory, id) });
     },
-    /** @param {number} weekday @param {ConfirmedTimes | null} t */
-    setConfirmedTemplate(weekday, t) {
-      if (t) {
-        const v = validateConfirmed(makeConfirmed(t));
-        if (!v.ok) {
-          notify(v.reason, 'error');
-          return false;
-        }
-      }
-      const key = String(weekday);
-      const templates = { ...state.data.weekdayTemplates };
-      const cur = { ...templates[key] };
-      if (t) cur.confirmed = confirmedTimes(t);
-      else delete cur.confirmed;
-      if (Object.keys(cur).length) templates[key] = cur;
-      else delete templates[key];
-      updateData({ ...state.data, weekdayTemplates: templates });
-      return true;
-    },
     /** 期間をまとめて確定 @param {PeriodRef} period */
     confirmPeriodFromHopes(period) {
       const r = confirmFromHopes(getPeriodDates(period), state.data.confirmed, state.data.hopes, state.data.pay, now().toISOString());
@@ -432,11 +420,12 @@ export function createController(deps) {
       notify(r.filled.length || r.skipped.length ? `${r.filled.length}日を確定しました${skip}` : '確定できる日がありませんでした（未確定で希望がある日がありません）');
       return r;
     },
-    /** 曜日のいつもので確定を埋める @param {PeriodRef} period */
+    /** 曜日のいつもので確定を埋める（希望と共通の型） @param {PeriodRef} period */
     confirmPeriodFromTemplates(period) {
-      const r = confirmFromTemplates(getPeriodDates(period), state.data.confirmed, state.data.weekdayTemplates, now().toISOString());
+      const r = confirmFromTemplates(getPeriodDates(period), state.data.confirmed, state.data.weekdayTemplates, state.data.pay, now().toISOString());
       if (r.filled.length) updateData({ ...state.data, confirmed: r.confirmed });
-      notify(r.filled.length ? `${r.filled.length}日を確定しました` : '埋められる日がありませんでした（未確定の日がないか、曜日のいつもの（確定）が未登録です）');
+      const skip = r.skipped.length ? `（${r.skipped.length}日は時間が決まらないためスキップ）` : '';
+      notify(r.filled.length || r.skipped.length ? `${r.filled.length}日を確定しました${skip}` : '埋められる日がありませんでした（未確定の日がないか、曜日のいつものが未登録です）');
       return r;
     },
     /** オープン・ラストの時刻 @param {'openTime' | 'lastTime'} field @param {number | null} minutes */

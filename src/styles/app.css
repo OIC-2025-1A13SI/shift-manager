@@ -369,3 +369,11 @@ button.row:active { background: var(--fill); }
 .select-input { min-height: 40px; border: 1px solid var(--sep); border-radius: 8px; background: var(--card); padding: 0 8px; font-size: 16px; color: var(--label); }
 .form-row .select-input + .select-input { margin-left: 4px; }
 .pay-page .dashed-add { width: 100%; margin: 16px 0 8px; }
+
+/* ---- シートの閉じるボタン（iPhone では背景のタップが効かないことがあるため、必ず表示） ---- */
+.backdrop { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.sheet-head-bar { position: relative; flex: none; padding-top: 2px; }
+.sheet-close { position: absolute; left: -6px; top: 6px; width: 44px; height: 44px; border: 0; background: none; color: rgba(255,255,255,.85); font-size: 20px; font-weight: 700; }
+.sheet-head-bar .sheet-title { padding: 0 44px; }
+.tb-right { display: flex; justify-content: flex-end; }
+.tb-pill { border: 1.5px solid var(--accent); background: none; color: var(--accent-text); border-radius: 8px; padding: 2px 6px; font-size: 11px; font-weight: 700; line-height: 1.15; min-height: 36px; }

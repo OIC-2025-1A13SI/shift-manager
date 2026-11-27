@@ -9,6 +9,7 @@ import { openAddSheet } from '../components/addSheet.js';
 import { openEntryEditor } from '../components/entryEditor.js';
 import { attachCalendar, renderCalendar, longDateLabel, shortDate } from '../components/calendarView.js';
 import { openCopyScreen } from './copyScreen.js';
+import { choosePeriod } from '../components/periodChooser.js';
 import { icons } from '../icons.js';
 
 export { longDateLabel };
@@ -85,7 +86,17 @@ export function createHopeScreen(c, now) {
   attachCalendar(root, c, {
     onAdd: openSheet,
     onListTap: openSheet,
-    handlers: { copy: () => openCopyScreen(c), edit: () => openEditor() },
+    handlers: {
+      copy: () => openCopyScreen(c),
+      edit: () => openEditor(),
+      // 曜日のいつもので未入力の日を埋める（2026-11-27 その他から移動）
+      fill: () => choosePeriod({
+        title: 'いつもので埋める',
+        message: '未入力の日だけを曜日のいつもので埋めます（入力済みの日は変えません）。',
+        around: c.getState().month,
+        onPick: (p) => c.fillHopesFromTemplates(p),
+      }),
+    },
   });
 
   /** @param {State} s */
@@ -93,6 +104,7 @@ export function createHopeScreen(c, now) {
     const hopes = s.data.hopes;
     renderCalendar(root, s, now(), {
       leftButtons: `<button type="button" class="icon-btn" data-action="copy" aria-label="LINE提出用コピー">${icons.share}</button>`,
+      rightButtons: `<button type="button" class="tb-pill" data-action="fill">いつもので<br>埋める</button>`,
       cell: (date) => {
         const rec = hopes[date];
         if (!rec) return { html: '', label: '未入力' };

@@ -16,11 +16,11 @@ import { formatConfirmed, confirmedDetail } from '../../domain/confirmed.js';
  *   title: string,
  *   hopeLabel: string | null,
  *   asHopeLabel: string | null,
- *   template: ConfirmedTimes | null,
+ *   template: string | null,
  *   templateLabel?: string,
  *   clearLabel: string | null,
  *   onAsHope: () => void,
- *   onTemplate: () => boolean,
+ *   onTemplate: () => void,
  *   onHistory: (id: string) => boolean,
  *   onNew: () => void,
  *   onClear: () => void,
@@ -37,14 +37,17 @@ export function openConfirmedSheet(c, p) {
   function render() {
     const history = c.getState().data.confirmedHistory;
     sheet.innerHTML = `
-      <div class="grabber" aria-hidden="true"></div>
-      <h2 class="sheet-title">${esc(p.title)}</h2>
+      <div class="sheet-head-bar">
+        <div class="grabber" aria-hidden="true"></div>
+        <button type="button" class="sheet-close" data-cs="close" aria-label="閉じる">✕</button>
+        <h2 class="sheet-title">${esc(p.title)}</h2>
+      </div>
       <div class="sheet-scroll">
         ${p.hopeLabel !== null ? `<p class="sheet-ref" data-testid="sheet-hope">希望：<strong>${esc(p.hopeLabel)}</strong></p>` : ''}
         ${p.asHopeLabel ? `<button type="button" class="quick-btn wide ok" data-cs="ashope">${esc(p.asHopeLabel)}</button>` : ''}
         ${p.template ? `
           <div class="sheet-label">${esc(p.templateLabel ?? '曜日のいつもの')}</div>
-          <button type="button" class="hist-card template" data-cs="template">${timeBlock(p.template)}<span class="hs-name">${esc([formatConfirmed(p.template), confirmedDetail(p.template)].filter(Boolean).join(' '))}</span></button>` : ''}
+          <button type="button" class="hist-card template" data-cs="template"><span class="hs-start">${esc(p.template)}</span></button>` : ''}
         <div class="sheet-label row-between"><span>確定の履歴</span>
           ${history.length ? `<button type="button" class="text-btn light" data-cs="edit">${editing ? '完了' : '編集'}</button>` : ''}</div>
         ${history.length ? '' : '<p class="sheet-note">まだ履歴はありません。確定した時間がここに並びます。</p>'}
@@ -81,12 +84,16 @@ export function openConfirmedSheet(c, p) {
     if (!(t instanceof HTMLElement)) return;
     const id = t.dataset.id ?? '';
     switch (t.dataset.cs) {
+      case 'close':
+        close();
+        break;
       case 'ashope':
         close();
         p.onAsHope();
         break;
       case 'template':
-        if (p.onTemplate()) close();
+        close();
+        p.onTemplate();
         break;
       case 'history':
         if (p.onHistory(id)) close();
@@ -112,6 +119,14 @@ export function openConfirmedSheet(c, p) {
     }
   });
   backdrop.addEventListener('click', close);
+  // 上の部分を下にスワイプしても閉じる
+  let sy = NaN;
+  sheet.addEventListener('touchstart', (e) => {
+    sy = /** @type {HTMLElement} */ (e.target).closest('.sheet-head-bar') ? e.touches[0].clientY : NaN;
+  }, { passive: true });
+  sheet.addEventListener('touchend', (e) => {
+    if (!Number.isNaN(sy) && e.changedTouches[0].clientY - sy > 60) close();
+  }, { passive: true });
   document.addEventListener('keydown', onKey);
   render();
   document.body.append(backdrop, sheet);

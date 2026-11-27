@@ -30,13 +30,18 @@ export function confirmedEntryHtml(c) {
 export function createConfirmedScreen(c, now) {
   const root = el(`<div class="screen confirmed-screen" data-screen="confirmed"></div>`);
 
-  /** @param {{ start: number | null, end: number | null } | null} [prefill] @param {string | null} [note] */
-  function openEditor(prefill = null, note = null) {
+  /**
+   * @param {{ start: number | null, end: number | null } | null} [prefill] 希望・曜日のいつものから決まった時刻（確定済みの時刻より優先）
+   * @param {string | null} [note]
+   * @param {string} [title]
+   */
+  function openEditor(prefill = null, note = null, title = '') {
     const s = c.getState();
     const targets = c.targets();
     const existing = !s.multi ? s.data.confirmed[s.selected] : undefined;
     const latest = [...s.data.confirmedHistory].sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt))[0]?.shift;
-    const tpl = !s.multi ? s.data.weekdayTemplates[String(weekdayOf(s.selected))]?.confirmed : undefined;
+    const tplR = !s.multi ? hopeToConfirmed(s.data.weekdayTemplates[String(weekdayOf(s.selected))]?.hope, s.data.pay) : null;
+    const tpl = tplR && tplR.ok ? { start: tplR.start, end: tplR.end, breakMinutes: 0 } : undefined;
     // 初期値：確定済みの値 → 希望から決まった時刻 → 曜日のいつもの → 最後に使った確定 → 19:00〜23:00
     const base = existing ?? tpl ?? latest ?? null;
     const hope = !s.multi ? s.data.hopes[s.selected]?.shift : undefined;
@@ -45,11 +50,11 @@ export function createConfirmedScreen(c, now) {
       const r = hopeToConfirmed(hope, s.data.pay);
       if (r) pf = { start: r.start, end: r.end };
     }
-    const start = existing?.start ?? pf?.start ?? base?.start ?? DEFAULT_START;
-    let end = existing?.end ?? pf?.end ?? base?.end ?? DEFAULT_END;
+    const start = (prefill ? pf?.start : existing?.start) ?? existing?.start ?? pf?.start ?? base?.start ?? DEFAULT_START;
+    let end = (prefill ? pf?.end : existing?.end) ?? existing?.end ?? pf?.end ?? base?.end ?? DEFAULT_END;
     if (end <= start) end = Math.min(start + 240, 1800);
     openConfirmedEditor({
-      title: existing ? '確定シフトの編集' : '確定シフトの入力',
+      title: title || (existing ? '確定シフトの編集' : '確定シフトの入力'),
       targetLabel: s.multi ? `${targets.length}日にまとめて入力` : longDateLabel(s.selected),
       hopeLabel: hope ? formatShift(hope) : null,
       note,
@@ -64,13 +69,20 @@ export function createConfirmedScreen(c, now) {
     });
   }
 
-  function asHope() {
-    const r = c.confirmAsHope();
-    if (r && !r.done) {
-      const hint = r.reason === 'オープン・ラストの時刻が未設定です'
-        ? '「その他」タブでオープン・ラストの時刻を登録すると、次からは1タップで確定できます。' : '時間を選んで確定してください。';
-      openEditor(r.prefill, `${r.reason}。${hint}`);
-    }
+  /** 希望をもとに確定（単日）：希望の時間を入れた入力画面を開き、その場で直せるようにする（2026-11-27 変更） */
+  function fromHope() {
+    const s = c.getState();
+    const r = hopeToConfirmed(s.data.hopes[s.selected]?.shift, s.data.pay);
+    if (!r) return;
+    const note = r.ok ? null : `${r.reason}。${r.reason === 'オープン・ラストの時刻が未設定です'
+      ? '「その他」タブでオープン・ラストの時刻を登録すると、次からは自動で入ります。' : '時間を選んでください。'}`;
+    openEditor({ start: r.start, end: r.end }, note, '希望をもとに確定');
+  }
+
+  /** 曜日のいつもの（希望と共通）。時刻が決まれば1タップで確定、決まらなければ入力画面へ */
+  function fromTemplate() {
+    const r = c.applyConfirmedTemplate();
+    if (r && !r.done) openEditor(r.prefill, `${r.reason}。時間を選んでください。`, '曜日のいつもので確定');
   }
 
   function openSheet() {
@@ -86,19 +98,21 @@ export function createConfirmedScreen(c, now) {
     if (!single) asHopeLabel = '選んだ日を希望どおりに確定';
     else if (hope && hope.kind !== 'unavailable') {
       const r = hopeToConfirmed(hope, s.data.pay);
-      asHopeLabel = r && r.ok ? `希望どおりに確定（${formatConfirmed({ start: r.start, end: r.end, breakMinutes: 0 })}）` : '希望をもとに確定…';
+      asHopeLabel = r && r.ok ? `希望をもとに確定（${formatConfirmed({ start: r.start, end: r.end, breakMinutes: 0 })}）` : '希望をもとに確定…';
     }
-    const tpl = single ? s.data.weekdayTemplates[String(weekdayOf(s.selected))]?.confirmed ?? null : null;
+    const tplShift = single ? s.data.weekdayTemplates[String(weekdayOf(s.selected))]?.hope : undefined;
+    const tplR = hopeToConfirmed(tplShift, s.data.pay);
+    const tpl = tplR ? (tplR.ok ? formatConfirmed({ start: tplR.start, end: tplR.end, breakMinutes: 0 }) : `${formatShift(/** @type {any} */ (tplShift))}（時間を選ぶ）`) : null;
     const hasValue = targets.some((d) => s.data.confirmed[d]);
     openConfirmedSheet(c, {
       title: single ? `${shortDate(s.selected)} の確定シフト` : `${targets.length}日の確定シフト`,
       hopeLabel: single ? (hope ? formatShift(hope) : 'なし') : null,
       asHopeLabel,
       template: tpl,
-      templateLabel: single ? `${WEEKDAYS[weekdayOf(s.selected)]}曜日のいつもの（確定）` : undefined,
+      templateLabel: single ? `${WEEKDAYS[weekdayOf(s.selected)]}曜日のいつもの` : undefined,
       clearLabel: hasValue ? (single ? '確定を取り消す' : '選んだ日の確定を取り消す') : null,
-      onAsHope: asHope,
-      onTemplate: () => c.applyConfirmedTemplate(),
+      onAsHope: () => (single ? fromHope() : c.confirmAsHope()),
+      onTemplate: fromTemplate,
       onHistory: (id) => c.applyConfirmedHistory(id),
       onNew: () => openEditor(),
       onClear: () => c.clearConfirmed(),
@@ -109,7 +123,7 @@ export function createConfirmedScreen(c, now) {
     const around = c.getState().month;
     const body = el(`<div class="dialog-choices one">
         <button type="button" data-k="hope">希望どおりにまとめて確定<span>未確定の日に希望を写します</span></button>
-        <button type="button" data-k="tpl">曜日のいつもので埋める<span>未確定の日を曜日のいつもの（確定）で埋めます</span></button>
+        <button type="button" data-k="tpl">曜日のいつもので埋める<span>未確定の日を曜日のいつもので埋めます</span></button>
       </div>`);
     const dlg = createDialog({ title: 'まとめて確定', message: '確定済みの日は変えません。', body, actions: [{ label: 'キャンセル', onClick: () => dlg.remove() }] });
     body.addEventListener('click', (ev) => {
@@ -158,17 +172,11 @@ export function createConfirmedScreen(c, now) {
         const badge = payBadge(date);
         const pd = badge ? '（給料日）' : '';
         if (cf) return { html: `${badge}<span class="cal-val cf">${esc(formatConfirmed(cf))}</span>`, label: `確定 ${formatConfirmed(cf)}${pd}` };
-        const h = hopes[date];
-        if (h) return { html: `${badge}<span class="cal-val ref ${h.shift.kind === 'unavailable' ? 'ng' : ''}">${esc(formatShift(h.shift))}</span>`, label: `未確定（希望 ${formatShift(h.shift)}）${pd}` };
         return { html: badge, label: `未確定${pd}` };
       },
       row: (date) => {
         const cf = confirmed[date];
-        if (cf) return { html: confirmedEntryHtml(cf), label: `確定 ${formatConfirmed(cf)}` };
-        const h = hopes[date];
-        return h
-          ? { html: `<span class="entry ref"><span class="entry-text small">希望 ${esc(formatShift(h.shift))}（未確定）</span></span>`, label: `未確定（希望 ${formatShift(h.shift)}）` }
-          : { html: '', label: '未確定' };
+        return cf ? { html: confirmedEntryHtml(cf), label: `確定 ${formatConfirmed(cf)}` } : { html: '', label: '未確定' };
       },
       addLabel: (st) => (st.multi ? `${st.multiSelection.length}日にまとめて確定` : '確定を入力'),
       panel: (st) => {

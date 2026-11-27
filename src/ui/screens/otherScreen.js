@@ -4,9 +4,6 @@ import { el, esc, delegate } from '../dom.js';
 import { WEEKDAYS } from '../../domain/calendar.js';
 import { formatShift } from '../../domain/formatter.js';
 import { minutesToClock } from '../../domain/shift.js';
-import { formatConfirmed, confirmedDetail, makeConfirmed } from '../../domain/confirmed.js';
-import { choosePeriod } from '../components/periodChooser.js';
-import { openConfirmedEditor } from '../components/confirmedEditor.js';
 import { createTimePicker } from '../components/timePicker.js';
 import { openPaySettings } from '../components/paySettingsPage.js';
 import { openAddSheet } from '../components/addSheet.js';
@@ -24,13 +21,9 @@ export function createOtherScreen(c, version) {
       <main class="page settings-page">
         <div class="banners"></div>
 
-        <div class="section-header">曜日のいつもの（希望シフト）</div>
+        <div class="section-header">曜日のいつもの（希望・確定で共通）</div>
         <div class="group weekday-group"></div>
-        <p class="section-footer">日付をタップしたときに、その曜日の時間をワンタップで入れられます。</p>
-        <div class="group">
-          <button type="button" class="row link" data-action="fill">希望をいつもので埋める…</button>
-        </div>
-        <p class="section-footer">前半・後半を選ぶと、未入力の日だけを曜日のいつもので埋めます（入力済みの日は変えません）。</p>
+        <p class="section-footer">希望シフト・確定シフトで日付をタップしたときに、その曜日の時間をワンタップで入れられます。希望シフト画面の「いつもので埋める」で、未入力の日をまとめて埋められます。</p>
 
         <div class="section-header">給料</div>
         <div class="group"><button type="button" class="row" data-action="pay-settings"><span class="grow">給料の設定</span><span class="sub pay-summary"></span><span class="chev" aria-hidden="true">›</span></button></div>
@@ -39,9 +32,6 @@ export function createOtherScreen(c, version) {
         <div class="section-header">確定シフト</div>
         <div class="group open-last-group"></div>
         <p class="section-footer">「希望どおり」で OP・LA や ○ の希望を確定にするときに、この時刻を使います。</p>
-        <div class="section-header">曜日のいつもの（確定シフト）</div>
-        <div class="group weekday-cf-group"></div>
-        <p class="section-footer">確定シフトの入力シートにワンタップで出します。確定シフトタブの「まとめて確定」からも使えます。</p>
 
         <div class="section-header">挨拶文（LINE提出用コピー）</div>
         <div class="group">
@@ -69,7 +59,6 @@ export function createOtherScreen(c, version) {
 
   const banners = /** @type {HTMLElement} */ (root.querySelector('.banners'));
   const weekdayGroup = /** @type {HTMLElement} */ (root.querySelector('.weekday-group'));
-  const weekdayCfGroup = /** @type {HTMLElement} */ (root.querySelector('.weekday-cf-group'));
   const openLastGroup = /** @type {HTMLElement} */ (root.querySelector('.open-last-group'));
   const toggle = /** @type {HTMLInputElement} */ (root.querySelector('[data-testid="settings-greet"]'));
   const fileInput = /** @type {HTMLInputElement} */ (root.querySelector('input[type=file]'));
@@ -124,39 +113,6 @@ export function createOtherScreen(c, version) {
     });
   }
 
-  function chooseFillPeriod() {
-    choosePeriod({
-      title: '希望をいつもので埋める',
-      message: '未入力の日だけを曜日のいつもので埋めます。',
-      around: c.getState().month,
-      onPick: (p) => c.fillHopesFromTemplates(p),
-    });
-  }
-
-  /** @param {number} wd */
-  function editConfirmedTemplate(wd) {
-    const cur = c.getState().data.weekdayTemplates[String(wd)]?.confirmed;
-    const name = `${WEEKDAYS[wd]}曜日のいつもの（確定）`;
-    const open = () => openConfirmedEditor({
-      title: name,
-      targetLabel: `毎週${WEEKDAYS[wd]}曜日の確定シフト`,
-      initial: makeConfirmed(cur ?? { start: 19 * 60, end: 23 * 60, breakMinutes: 0 }),
-      timesOnly: true,
-      doneLabel: '登録する',
-      onDone: (cs) => c.setConfirmedTemplate(wd, cs),
-    });
-    if (!cur) { open(); return; }
-    const dlg = createDialog({
-      title: name,
-      message: `${formatConfirmed(cur)}${confirmedDetail(cur) ? `（${confirmedDetail(cur)}）` : ''}`,
-      actions: [
-        { label: '削除', style: 'destructive', onClick: () => { dlg.remove(); c.setConfirmedTemplate(wd, null); } },
-        { label: '変更', style: 'strong', onClick: () => { dlg.remove(); open(); } },
-      ],
-    });
-    document.body.appendChild(dlg);
-  }
-
   /** @param {'openTime' | 'lastTime'} field */
   function editOpenLast(field) {
     const cur = c.getState().data.pay[field];
@@ -180,10 +136,8 @@ export function createOtherScreen(c, version) {
 
   delegate(root, {
     template: (t) => editTemplate(Number(t.dataset.wd)),
-    'template-cf': (t) => editConfirmedTemplate(Number(t.dataset.wd)),
     'pay-settings': () => openPaySettings(c),
     'open-last': (t) => editOpenLast(/** @type {'openTime' | 'lastTime'} */ (t.dataset.field)),
-    fill: () => chooseFillPeriod(),
     export: () => {
       flushAll();
       c.exportBackup();
@@ -205,13 +159,6 @@ export function createOtherScreen(c, version) {
         return `<button type="button" class="row" data-action="template" data-wd="${i}">
             <span class="grow wd-name ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}曜日</span>
             <span class="sub ${t ? 'set' : ''}">${t ? esc(formatShift(t)) : '未登録'}</span><span class="chev" aria-hidden="true">›</span>
-          </button>`;
-      }).join('');
-      weekdayCfGroup.innerHTML = WEEKDAYS.map((w, i) => {
-        const t = s.data.weekdayTemplates[String(i)]?.confirmed;
-        return `<button type="button" class="row" data-action="template-cf" data-wd="${i}">
-            <span class="grow wd-name ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}曜日</span>
-            <span class="sub ${t ? 'set' : ''}">${t ? esc([formatConfirmed(t), t.breakMinutes ? `休憩${t.breakMinutes}分` : ''].filter(Boolean).join(' ')) : '未登録'}</span><span class="chev" aria-hidden="true">›</span>
           </button>`;
       }).join('');
       const ps = /** @type {HTMLElement} */ (root.querySelector('.pay-summary'));

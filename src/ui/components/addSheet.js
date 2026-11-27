@@ -38,8 +38,11 @@ export function openAddSheet(c, p) {
   function render() {
     const history = c.getState().data.hopeHistory;
     sheet.innerHTML = `
-      <div class="grabber" aria-hidden="true"></div>
-      <h2 class="sheet-title">${esc(p.title)}</h2>
+      <div class="sheet-head-bar">
+        <div class="grabber" aria-hidden="true"></div>
+        <button type="button" class="sheet-close" data-sh="close" aria-label="閉じる">✕</button>
+        <h2 class="sheet-title">${esc(p.title)}</h2>
+      </div>
       <div class="sheet-scroll">
         ${p.template ? `
           <div class="sheet-label">${esc(p.templateLabel ?? '曜日のいつもの')}</div>
@@ -88,6 +91,9 @@ export function openAddSheet(c, p) {
     if (!(t instanceof HTMLElement)) return;
     const id = t.dataset.id ?? '';
     switch (t.dataset.sh) {
+      case 'close':
+        close();
+        break;
       case 'template':
         if (p.template) pick(p.template);
         break;
@@ -123,6 +129,14 @@ export function openAddSheet(c, p) {
     }
   });
   backdrop.addEventListener('click', close);
+  // 上の部分を下にスワイプしても閉じる
+  let sy = NaN;
+  sheet.addEventListener('touchstart', (e) => {
+    sy = /** @type {HTMLElement} */ (e.target).closest('.sheet-head-bar') ? e.touches[0].clientY : NaN;
+  }, { passive: true });
+  sheet.addEventListener('touchend', (e) => {
+    if (!Number.isNaN(sy) && e.changedTouches[0].clientY - sy > 60) close();
+  }, { passive: true });
   document.addEventListener('keydown', onKey);
   render();
   document.body.append(backdrop, sheet);

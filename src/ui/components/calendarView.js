@@ -27,6 +27,7 @@ export function shortDate(d) {
  *   row: (date: DateKey) => { html: string, label: string },
  *   panel: (s: State) => string,
  *   leftButtons: string,
+ *   rightButtons?: string,
  *   addLabel: (s: State) => string,
  * }} CalendarParts
  */
@@ -90,7 +91,7 @@ export function renderCalendar(root, s, now, parts) {
         </button>
         <button type="button" class="month-arrow" data-action="next" aria-label="次の月">›</button>
       </div>
-      <div class="tb-right"></div>
+      <div class="tb-right">${parts.rightButtons ?? ''}</div>
     </header>`;
   const banners = [s.loadError, s.saveError]
     .filter(Boolean)

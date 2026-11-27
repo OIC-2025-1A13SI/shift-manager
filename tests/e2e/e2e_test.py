@@ -208,6 +208,21 @@ def main():
             expect(cell(page, '2026-12-03')).to_contain_text('OP-LA')
         check('T17/T19/ピン', '履歴の再使用・ピン留め・削除', history)
 
+        def sheet_close():
+            add_btn()
+            # iOS Safari は cursor:pointer のない要素のタップを click として扱わないため、背景に必要
+            assert page.evaluate("getComputedStyle(document.querySelector('.backdrop')).cursor") == 'pointer'
+            page.click('[data-sh="close"]')
+            expect(page.locator('.sheet')).to_have_count(0)
+            page.click('.tabbar [data-tab="other"]')
+            page.click('[data-action="template"][data-wd="0"]')
+            expect(page.locator('.sheet')).to_be_visible()
+            page.click('[data-sh="close"]')
+            expect(page.locator('.sheet')).to_have_count(0)
+            expect(page.locator('.backdrop')).to_have_count(0)
+            page.click('.tabbar [data-tab="hope"]')
+        check('SHEET', 'シートは✕で閉じられる（その他の曜日のいつものも）', sheet_close)
+
         def overwrite_clear():
             cell(page, '2026-12-07').click()
             expect(page.locator('.day-entry')).to_contain_text('勤務不可')
@@ -278,11 +293,11 @@ def main():
             page.click('[data-action="template"][data-wd="6"]')  # 土曜
             page.click('[data-sh="unavailable"]')
             expect(page.locator('[data-action="template"][data-wd="6"]')).to_contain_text('×')
-            # まとめて入力（12月後半：火 22,29 / 土 19,26 のうち未入力のみ）
-            page.click('[data-action="fill"]')
+            # まとめて入力（12月後半：火 22,29 / 土 19,26 のうち未入力のみ）— 希望シフト画面の「いつもので埋める」
+            page.click('.tabbar [data-tab="hope"]')
+            page.click('.topbar [data-action="fill"]')
             page.click('.dialog-choices [data-key="2026-12-second"]')
             expect(page.get_by_test_id('toast')).to_contain_text('4日を入力しました')
-            page.click('.tabbar [data-tab="hope"]')
             expect(cell(page, '2026-12-22')).to_contain_text('19-LA')
             expect(cell(page, '2026-12-19')).to_contain_text('×')
             expect(cell(page, '2026-12-31')).to_contain_text('×')
@@ -455,21 +470,31 @@ def main():
             expect(page.get_by_test_id('toast')).to_have_text('復元しました')
             page.click('.tabbar [data-tab="confirmed"]')
             show_dec()
-            expect(cell(page, '2026-12-01').locator('.cal-val.ref')).to_have_text('19-23')
-            expect(cell(page, '2026-12-04').locator('.cal-val.ref')).to_have_text('×')
+            expect(cell(page, '2026-12-01').locator('.cal-val')).to_have_count(0)
+            expect(cell(page, '2026-12-04').locator('.cal-val')).to_have_count(0)
             page.screenshot(path=OUT / 'v2_09_confirmed.png')
-        check('CF-01', '確定タブ：未確定の日は希望を参考表示', cf_seed)
+        check('CF-01', '確定タブのカレンダーに希望の時間は出さない', cf_seed)
 
         def cf_ashope():
             cell(page, '2026-12-01').click()
             expect(page.get_by_test_id('panel-hope')).to_contain_text('19-23')
             cf_add()
-            expect(page.locator('[data-cs="ashope"]')).to_contain_text('希望どおりに確定（19-23）')
+            expect(page.locator('[data-cs="ashope"]')).to_contain_text('希望をもとに確定（19-23）')
             page.screenshot(path=OUT / 'v2_10_cf_sheet.png')
             page.click('[data-cs="ashope"]')
-            expect(cell(page, '2026-12-01').locator('.cal-val.cf')).to_have_text('19-23')
+            expect(page.locator('#cf-title')).to_have_text('希望をもとに確定')
+            expect(page.locator('[data-cf="chip"][data-key="start"]')).to_have_text('19:00')
+            expect(page.locator('[data-cf="chip"][data-key="end"]')).to_have_text('23:00')
+            page.click('[data-cf="chip"][data-key="end"]')
+            vp = page.locator('[data-slot="end"] .wheel-vp').nth(1)
+            vp.focus()
+            for _ in range(30):
+                vp.press('ArrowDown')  # その場で 23:30 に直す
+            expect(page.get_by_test_id('cf-output')).to_have_text('19-23:30')
+            page.click('[data-cf="done"]')
+            expect(cell(page, '2026-12-01').locator('.cal-val.cf')).to_have_text('19-23:30')
             assert 'selected' in cell(page, '2026-12-02').get_attribute('class')
-        check('CF-02', '希望どおりで1タップ確定→翌日へ', cf_ashope)
+        check('CF-02', '希望をもとに確定：希望の時間が入った画面でその場で修正→翌日へ', cf_ashope)
 
         def cf_oplast_unset():
             cf_add()
@@ -494,8 +519,12 @@ def main():
             cf_add()
             expect(page.locator('[data-cs="ashope"]')).to_contain_text('（10-29）')
             page.click('[data-cs="ashope"]')
+            expect(page.locator('[data-cf="chip"][data-key="start"]')).to_have_text('10:00')
+            expect(page.locator('[data-cf="chip"][data-key="end"]')).to_have_text('29:00')
+            expect(page.get_by_test_id('cf-note')).to_have_count(0)
+            page.click('[data-cf="done"]')
             expect(cell(page, '2026-12-02').locator('.cal-val.cf')).to_have_text('10-29')
-        check('CF-04', 'OP/LAの時刻を登録すると希望どおりで確定できる', cf_oplast_set)
+        check('CF-04', 'OP/LAの時刻を登録すると希望をもとにその時刻が入る', cf_oplast_set)
 
         def cf_editor():
             cell(page, '2026-12-03').click()
@@ -543,16 +572,17 @@ def main():
             expect(cell(page, '2026-12-05').locator('.cal-val.cf')).to_have_text('10-29')
             expect(cell(page, '2026-12-08').locator('.cal-val.cf')).to_have_text('17-22')
             expect(cell(page, '2026-12-03').locator('.cal-val.cf')).to_have_text('19-30')
+            expect(cell(page, '2026-12-01').locator('.cal-val.cf')).to_have_text('19-23:30')
         check('CF-07', '希望どおりにまとめて確定（確定済みは変えない）', cf_bulk)
 
         def cf_template():
             page.click('.tabbar [data-tab="other"]')
-            page.click('[data-action="template-cf"][data-wd="3"]')
-            expect(page.locator('#cf-title')).to_have_text('水曜日のいつもの（確定）')
-            expect(page.get_by_test_id('cf-solo')).to_have_count(0)
-            page.click('[data-cf="break"][data-min="15"]')
-            page.click('[data-cf="done"]')
-            expect(page.locator('[data-action="template-cf"][data-wd="3"]')).to_contain_text('19-23 休憩15分')
+            expect(page.locator('.section-header').filter(has_text='曜日のいつもの（希望・確定で共通）')).to_have_count(1)
+            expect(page.locator('[data-action="template-cf"]')).to_have_count(0)
+            page.click('[data-action="template"][data-wd="3"]')
+            page.click('[data-sh="new"]')
+            page.click('[data-ed="done"]')
+            expect(page.locator('[data-action="template"][data-wd="3"]')).to_contain_text('19-23')
             page.click('.tabbar [data-tab="confirmed"]')
             page.click('[data-action="bulk"]')
             page.click('.dialog-choices [data-k="tpl"]')
@@ -561,10 +591,11 @@ def main():
             expect(cell(page, '2026-12-09').locator('.cal-val.cf')).to_have_text('19-23')
             cell(page, '2026-12-16').click()
             cf_add()
-            expect(page.locator('[data-cs="template"]')).to_contain_text('休憩15分')
+            expect(page.locator('.sheet-label').filter(has_text='水曜日のいつもの')).to_have_count(1)
+            expect(page.locator('[data-cs="template"]')).to_have_text('19-23')
             page.click('[data-cs="template"]')
             expect(cell(page, '2026-12-16').locator('.cal-val.cf')).to_have_text('19-23')
-        check('CF-08', '曜日のいつもの（確定）：登録・まとめて・ワンタップ', cf_template)
+        check('CF-08', '曜日のいつもの（希望と共通）：まとめて確定・ワンタップ確定', cf_template)
 
         def cf_history_clear():
             cell(page, '2026-12-10').click()

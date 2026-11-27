@@ -67,13 +67,17 @@ test('期間をまとめて確定: 未確定で希望がある日だけ、決ま
   assert.equal(b.confirmed['2026-12-02'].end, H(29));
 });
 
-test('曜日のいつもの（確定）で未確定の日を埋める', () => {
-  const templates = { 2: { confirmed: { start: H(18), end: H(23), breakMinutes: 15 } } }; // 火
+test('曜日のいつもの（希望と共通）で未確定の日を埋める', () => {
+  const templates = { 2: { hope: range(t(H(18)), t(H(23))) }, 3: { hope: range(OPEN, LAST) }, 4: { hope: { kind: 'unavailable' } } };
   const confirmed = { '2026-12-08': { ...makeConfirmed({ start: H(17), end: H(22), breakMinutes: 0 }), updatedAt: 'x' } };
-  const r = confirmFromTemplates(['2026-12-01', '2026-12-02', '2026-12-08'], confirmed, templates, 'now');
+  const dates = ['2026-12-01', '2026-12-02', '2026-12-03', '2026-12-08'];
+  const r = confirmFromTemplates(dates, confirmed, templates, NOPAY, 'now');
   assert.deepEqual(r.filled, ['2026-12-01']);
-  assert.equal(r.confirmed['2026-12-01'].breakMinutes, 15);
-  assert.equal(r.confirmed['2026-12-08'].start, H(17));
+  assert.deepEqual(r.skipped, ['2026-12-02'], 'OP/LA の時刻が未登録の水曜はスキップ');
+  assert.equal(r.confirmed['2026-12-01'].start, H(18));
+  assert.equal(r.confirmed['2026-12-08'].start, H(17), '確定済みは変えない');
+  assert.equal('2026-12-03' in r.confirmed, false, '×の木曜は対象外');
+  assert.deepEqual(confirmFromTemplates(dates, confirmed, templates, PAY, 'now').filled, ['2026-12-01', '2026-12-02']);
 });
 
 async function ready(storage = createMemoryStorage()) {
@@ -155,14 +159,19 @@ test('希望どおり（複数選択）とまとめて確定・曜日のいつ�
   const r = c.confirmPeriodFromHopes(DEC1);
   assert.deepEqual(r.filled, ['2026-12-03']);
   assert.deepEqual(r.skipped, ['2026-12-02']);
-  c.setConfirmedTemplate(3, { start: H(18), end: H(22), breakMinutes: 0 }); // 水
+  c.setHopeTemplate(3, range(t(H(18)), t(H(22)))); // 水（希望・確定で共通）
   assert.equal(c.confirmPeriodFromTemplates(DEC1).filled.length, 2); // 12/2, 12/9（12/16 は後半）
   assert.equal(c.getState().data.confirmed['2026-12-02'].start, H(18));
   c.tapDate('2026-12-16');
-  assert.ok(c.applyConfirmedTemplate());
-  assert.equal(c.setConfirmedTemplate(1, { start: H(19), end: H(18), breakMinutes: 0 }), false);
-  c.setConfirmedTemplate(3, null);
-  assert.deepEqual(c.getState().data.weekdayTemplates, {});
+  assert.deepEqual(c.applyConfirmedTemplate(), { done: true });
+  assert.equal(c.getState().data.confirmed['2026-12-16'].end, H(22));
+  c.setHopeTemplate(3, range(OPEN, t(H(22))));
+  c.tapDate('2026-12-23');
+  const r2 = c.applyConfirmedTemplate();
+  assert.equal(r2.done, false, 'OPの時刻が未登録なら入力画面へ');
+  assert.deepEqual(r2.prefill, { start: null, end: H(22) });
+  c.tapDate('2026-12-24');
+  assert.equal(c.applyConfirmedTemplate(), null, '型のない曜日');
 });
 
 test('確定の履歴のピン留め・削除', async () => {

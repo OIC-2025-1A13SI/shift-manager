@@ -142,19 +142,24 @@ export function confirmFromHopes(dates, confirmed, hopes, pay, nowIso) {
 }
 
 /**
- * 曜日のいつもの（確定）で未確定の日を埋める
+ * 曜日のいつもので未確定の日を埋める（希望・確定で共通の型。2026-11-27 変更）。
+ * 型を「希望どおり」と同じ規則で時刻にする。時刻が決まらない日はスキップ。
  * @param {DateKey[]} dates @param {Record<DateKey, ConfirmedRecord>} confirmed
- * @param {Record<string, WeekdayTemplate>} templates @param {string} nowIso
+ * @param {Record<string, WeekdayTemplate>} templates
+ * @param {Pick<PaySettings, 'openTime' | 'lastTime'>} pay @param {string} nowIso
+ * @returns {{ confirmed: Record<DateKey, ConfirmedRecord>, filled: DateKey[], skipped: DateKey[] }}
  */
-export function confirmFromTemplates(dates, confirmed, templates, nowIso) {
+export function confirmFromTemplates(dates, confirmed, templates, pay, nowIso) {
   const next = { ...confirmed };
   const filled = [];
+  const skipped = [];
   for (const d of dates) {
     if (next[d]) continue;
-    const t = templates[String(weekdayOf(d))]?.confirmed;
-    if (!t) continue;
-    next[d] = { ...makeConfirmed(t), updatedAt: nowIso };
+    const r = hopeToConfirmed(templates[String(weekdayOf(d))]?.hope, pay);
+    if (r === null) continue;
+    if (!r.ok) { skipped.push(d); continue; }
+    next[d] = { ...makeConfirmed({ start: r.start, end: r.end, breakMinutes: 0 }), updatedAt: nowIso };
     filled.push(d);
   }
-  return { confirmed: next, filled };
+  return { confirmed: next, filled, skipped };
 }

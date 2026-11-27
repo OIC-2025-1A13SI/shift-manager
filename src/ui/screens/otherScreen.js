@@ -8,6 +8,7 @@ import { formatConfirmed, confirmedDetail, makeConfirmed } from '../../domain/co
 import { choosePeriod } from '../components/periodChooser.js';
 import { openConfirmedEditor } from '../components/confirmedEditor.js';
 import { createTimePicker } from '../components/timePicker.js';
+import { openPaySettings } from '../components/paySettingsPage.js';
 import { openAddSheet } from '../components/addSheet.js';
 import { openEntryEditor } from '../components/entryEditor.js';
 import { createDialog } from '../components/dialogs.js';
@@ -30,6 +31,10 @@ export function createOtherScreen(c, version) {
           <button type="button" class="row link" data-action="fill">希望をいつもので埋める…</button>
         </div>
         <p class="section-footer">前半・後半を選ぶと、未入力の日だけを曜日のいつもので埋めます（入力済みの日は変えません）。</p>
+
+        <div class="section-header">給料</div>
+        <div class="group"><button type="button" class="row" data-action="pay-settings"><span class="grow">給料の設定</span><span class="sub pay-summary"></span><span class="chev" aria-hidden="true">›</span></button></div>
+        <p class="section-footer">基本時給、深夜割増、一人シフト加算、交通費、締め日・給料日、目標額。</p>
 
         <div class="section-header">確定シフト</div>
         <div class="group open-last-group"></div>
@@ -176,6 +181,7 @@ export function createOtherScreen(c, version) {
   delegate(root, {
     template: (t) => editTemplate(Number(t.dataset.wd)),
     'template-cf': (t) => editConfirmedTemplate(Number(t.dataset.wd)),
+    'pay-settings': () => openPaySettings(c),
     'open-last': (t) => editOpenLast(/** @type {'openTime' | 'lastTime'} */ (t.dataset.field)),
     fill: () => chooseFillPeriod(),
     export: () => {
@@ -208,6 +214,9 @@ export function createOtherScreen(c, version) {
             <span class="sub ${t ? 'set' : ''}">${t ? esc([formatConfirmed(t), t.breakMinutes ? `休憩${t.breakMinutes}分` : ''].filter(Boolean).join(' ')) : '未登録'}</span><span class="chev" aria-hidden="true">›</span>
           </button>`;
       }).join('');
+      const ps = /** @type {HTMLElement} */ (root.querySelector('.pay-summary'));
+      ps.textContent = s.data.pay.hourlyWage === null ? '時給未設定' : `時給${s.data.pay.hourlyWage.toLocaleString('ja-JP')}円`;
+      ps.classList.toggle('set', s.data.pay.hourlyWage !== null);
       openLastGroup.innerHTML = /** @type {const} */ ([['openTime', 'オープン（OP）の時刻'], ['lastTime', 'ラスト（LA）の時刻']]).map(([f, label]) => {
         const v = s.data.pay[f];
         return `<button type="button" class="row" data-action="open-last" data-field="${f}">

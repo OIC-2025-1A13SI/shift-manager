@@ -325,3 +325,47 @@ button.row:active { background: var(--fill); }
 .dialog-choices.one button { min-height: 60px; }
 .dialog-picker { margin-top: 10px; background: var(--card); border-radius: 10px; }
 .form-card + .form-card { margin-top: 12px; }
+
+/* ---- 段階③：給料計算 ---- */
+.cal-cell { position: relative; }
+.pay-badge { position: absolute; top: 3px; right: 4px; width: 17px; height: 17px; border-radius: 50%; background: #f5c400; color: #fff; font-size: 11px; font-weight: 800; line-height: 17px; text-align: center; }
+.payday-line { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: none; padding: 12px 16px; text-align: left; box-shadow: 0 0.5px 0 var(--sep); }
+.pd-label { color: #c79a00; font-weight: 700; font-size: 15px; padding-right: 12px; border-right: 3px solid #f5c400; }
+.pd-yen { flex: 1; color: #c79a00; font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.payday-line .chev { color: var(--label-3); font-size: 22px; }
+@media (prefers-color-scheme: dark) { .pd-label, .pd-yen { color: #ffd43b; } }
+.pay-nav { grid-template-columns: auto 1fr auto; }
+.pay-title { border: 0; background: none; display: flex; flex-direction: column; align-items: center; line-height: 1.15; padding: 4px 0; }
+.pt-main { font-size: 17px; font-weight: 700; } .pt-sub { font-size: 12px; color: var(--label-2); }
+.pay-page { padding-top: 12px; }
+.pay-page .banner { margin: 0 0 12px; }
+.banner.info { background: var(--accent-tint); color: var(--label); }
+.inline-link { border: 0; background: none; padding: 0; color: var(--accent-text); font-weight: 700; text-decoration: underline; font-size: inherit; }
+.pay-hero { background: var(--card); border-radius: 14px; padding: 18px 16px 14px; text-align: center; border: 1px solid var(--sep); }
+.ph-label { font-size: 14px; color: var(--label-2); font-weight: 600; }
+.ph-amount { font-size: 40px; font-weight: 800; letter-spacing: -0.5px; font-variant-numeric: tabular-nums; margin: 4px 0 2px; color: var(--accent-text); }
+.ph-sub { font-size: 13px; color: var(--label-2); }
+.ph-stats { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 14px; border-top: 1px solid var(--sep); padding-top: 12px; }
+.ph-stats div { display: flex; flex-direction: column; gap: 2px; }
+.ph-stats span { font-size: 12px; color: var(--label-2); }
+.ph-stats strong { font-size: 16px; font-variant-numeric: tabular-nums; }
+.ph-warn { margin: 10px 0 0; font-size: 13px; color: var(--red); }
+.pay-card { background: var(--card); border-radius: 14px; padding: 14px 16px; margin-top: 12px; border: 1px solid var(--sep); }
+.pc-title { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+.pc-note { font-size: 13px; color: var(--label-2); margin: 4px 0 0; }
+.pc-line { font-size: 15px; margin: 0; }
+.target-bar { height: 12px; border-radius: 6px; background: var(--fill); overflow: hidden; margin-top: 4px; }
+.target-bar span { display: block; height: 100%; background: var(--accent); border-radius: 6px; }
+.breakdown { margin: 0; }
+.breakdown div { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 0.5px solid var(--sep); font-size: 15px; }
+.breakdown dt { color: var(--label-2); } .breakdown dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 600; }
+.breakdown .total { border-bottom: 0; } .breakdown .total dt { color: var(--label); font-weight: 700; } .breakdown .total dd { font-size: 17px; font-weight: 800; }
+.pay-row { display: grid; grid-template-columns: 78px 1fr auto auto; gap: 8px; align-items: center; padding: 9px 0; border-bottom: 0.5px solid var(--sep); font-size: 14px; font-variant-numeric: tabular-nums; }
+.pay-row:last-child { border-bottom: 0; }
+.pr-date span { margin-left: 1px; font-size: 12px; }
+.pr-time small { display: block; font-size: 11px; color: var(--label-2); }
+.pr-hours { color: var(--label-2); font-size: 13px; }
+.pr-yen { font-weight: 700; text-align: right; min-width: 72px; }
+.select-input { min-height: 40px; border: 1px solid var(--sep); border-radius: 8px; background: var(--card); padding: 0 8px; font-size: 16px; color: var(--label); }
+.form-row .select-input + .select-input { margin-left: 4px; }
+.pay-page .dashed-add { width: 100%; margin: 16px 0 8px; }

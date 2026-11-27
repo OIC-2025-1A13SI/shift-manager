@@ -11,7 +11,7 @@ import {
 import { setShift, clearShift, validateShift } from '../domain/shift.js';
 import { touchHistory, removeHistory, togglePin } from '../domain/history.js';
 import { buildSubmission, buildLines, countMissing } from '../domain/formatter.js';
-import { createDefaultAppData, migrateAppData } from '../domain/appData.js';
+import { createDefaultAppData, migrateAppData, validateAppData } from '../domain/appData.js';
 import { fillHopesFromTemplates } from '../domain/templates.js';
 import {
   validateConfirmed, setConfirmed, clearConfirmed, makeConfirmed, confirmedKey, confirmedTimes,
@@ -45,6 +45,7 @@ import { createBackup, parseBackup } from '../infrastructure/backup.js';
  *   tab: Tab,
  *   view: 'calendar' | 'list',
  *   month: MonthRef,
+ *   payMonth: MonthRef | null,
  *   selected: DateKey,
  *   multi: boolean,
  *   multiSelection: DateKey[],
@@ -71,6 +72,7 @@ export function createController(deps) {
     tab: 'hope',
     view: 'calendar',
     month: monthOf(today),
+    payMonth: null,
     selected: today,
     multi: false,
     multiSelection: [],
@@ -186,6 +188,10 @@ export function createController(deps) {
     moveMonth(n) {
       const idx = state.month.year * 12 + state.month.month - 1 + n;
       set({ month: { year: Math.floor(idx / 12), month: (idx % 12) + 1 } });
+    },
+    /** 給料計算タブで表示する給料日の月（null は次の給料日） @param {MonthRef | null} m */
+    setPayMonth(m) {
+      set({ payMonth: m });
     },
     goToday() {
       set(selectAndShow(todayKey(now())));
@@ -440,6 +446,24 @@ export function createController(deps) {
         return false;
       }
       updateData({ ...state.data, pay: { ...state.data.pay, [field]: minutes } });
+      return true;
+    },
+
+    // ---- 給料の設定（docs/v2_redesign.md §3.7） ----
+    /** @param {Partial<import('../domain/types.js').PaySettings>} patch */
+    setPay(patch) {
+      const pay = { ...state.data.pay, ...patch };
+      if (pay.nightEnd <= pay.nightStart) {
+        notify('深夜の終わりは始まりより後にしてください', 'error');
+        return false;
+      }
+      const v = validateAppData({ ...state.data, pay });
+      if (!v.ok) {
+        notify('給料の設定に不正な値があります（金額は0以上の整数で入力してください）', 'error');
+        return false;
+      }
+      updateData({ ...state.data, pay });
+      notify('給料の設定を保存しました');
       return true;
     },
 

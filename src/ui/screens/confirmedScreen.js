@@ -12,6 +12,8 @@ import { choosePeriod } from '../components/periodChooser.js';
 import { createDialog } from '../components/dialogs.js';
 import { DEFAULT_START, DEFAULT_END } from '../components/entryEditor.js';
 import { icons } from '../icons.js';
+import { addMonths, monthOf } from '../../domain/calendar.js';
+import { paydayInMonth, summarizePay, formatYen } from '../../domain/pay.js';
 
 /** @typedef {import('../../application/controller.js').State} State */
 /** @typedef {ReturnType<typeof import('../../application/controller.js').createController>} Controller */
@@ -127,20 +129,38 @@ export function createConfirmedScreen(c, now) {
   attachCalendar(root, c, {
     onAdd: openSheet,
     onListTap: openSheet,
-    handlers: { bulk: () => openBulkMenu(), edit: () => openEditor() },
+    handlers: {
+      bulk: () => openBulkMenu(),
+      edit: () => openEditor(),
+      payday: () => {
+        c.setPayMonth(monthOf(c.getState().selected));
+        c.setTab('pay');
+      },
+    },
   });
 
   /** @param {State} s */
   function update(s) {
-    const { confirmed, hopes } = s.data;
+    const { confirmed, hopes, pay } = s.data;
+    // 給料日（表示中の月とその前後）。¥ 印と金額の表示に使う
+    const paydays = new Set([-1, 0, 1].map((n) => paydayInMonth(addMonths(s.month, n), pay)));
+    const payBadge = (/** @type {string} */ d) => (paydays.has(d) ? '<span class="pay-badge" aria-hidden="true">¥</span>' : '');
+    const paydayLine = (/** @type {string} */ d) => {
+      if (!paydays.has(d)) return '';
+      const r = summarizePay(monthOf(d), confirmed, hopes, pay);
+      return `<button type="button" class="payday-line" data-action="payday" data-testid="payday-line">
+          <span class="pd-label">給料日</span><span class="pd-yen">${esc(formatYen(r.sum.total))}</span><span class="chev" aria-hidden="true">›</span></button>`;
+    };
     renderCalendar(root, s, now(), {
       leftButtons: `<button type="button" class="icon-btn" data-action="bulk" aria-label="まとめて確定">${icons.stack}</button>`,
       cell: (date) => {
         const cf = confirmed[date];
-        if (cf) return { html: `<span class="cal-val cf">${esc(formatConfirmed(cf))}</span>`, label: `確定 ${formatConfirmed(cf)}` };
+        const badge = payBadge(date);
+        const pd = badge ? '（給料日）' : '';
+        if (cf) return { html: `${badge}<span class="cal-val cf">${esc(formatConfirmed(cf))}</span>`, label: `確定 ${formatConfirmed(cf)}${pd}` };
         const h = hopes[date];
-        if (h) return { html: `<span class="cal-val ref ${h.shift.kind === 'unavailable' ? 'ng' : ''}">${esc(formatShift(h.shift))}</span>`, label: `未確定（希望 ${formatShift(h.shift)}）` };
-        return { html: '', label: '未確定' };
+        if (h) return { html: `${badge}<span class="cal-val ref ${h.shift.kind === 'unavailable' ? 'ng' : ''}">${esc(formatShift(h.shift))}</span>`, label: `未確定（希望 ${formatShift(h.shift)}）${pd}` };
+        return { html: badge, label: `未確定${pd}` };
       },
       row: (date) => {
         const cf = confirmed[date];
@@ -155,7 +175,7 @@ export function createConfirmedScreen(c, now) {
         if (st.multi) return `<button type="button" class="dashed-add" data-action="add">＋ ${st.multiSelection.length}日にまとめて確定</button>`;
         const cf = confirmed[st.selected];
         const h = hopes[st.selected];
-        return `<p class="ref-line" data-testid="panel-hope">希望：<strong>${h ? esc(formatShift(h.shift)) : 'なし'}</strong></p>
+        return `${paydayLine(st.selected)}<p class="ref-line" data-testid="panel-hope">希望：<strong>${h ? esc(formatShift(h.shift)) : 'なし'}</strong></p>
           ${cf ? `<button type="button" class="day-entry" data-action="edit" aria-label="${esc(`${shortDate(st.selected)}の確定 ${formatConfirmed(cf)} を編集`)}">${confirmedEntryHtml(cf)}<span class="chev" aria-hidden="true">›</span></button>` : ''}
           <button type="button" class="dashed-add" data-action="add">＋ ${cf ? '確定を変更' : '確定を入力'}</button>`;
       },

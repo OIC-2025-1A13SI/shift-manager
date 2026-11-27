@@ -413,11 +413,10 @@ def main():
             expect(cell(page, '2026-12-05')).to_contain_text('19-23')
         check('T27', '壊れたJSONはエラー、現データ保持', broken)
 
-        def placeholder():
-            page.click('.tabbar [data-tab="pay"]')
-            expect(page.locator('.empty-state')).to_contain_text('準備中')
-            page.click('.tabbar [data-tab="hope"]')
-        check('TAB', '給料計算タブは準備中表示', placeholder)
+        def tab_order():
+            tabs = [page.locator('.tabbar button').nth(i).inner_text().strip() for i in range(4)]
+            assert tabs == ['確定シフト', '希望シフト', '給料計算', 'その他'], tabs
+        check('TAB', '下部タブの並び（確定・希望・給料・その他）', tab_order)
 
         # ---- 段階②：確定シフト（既知のデータから始めるため、用意したバックアップを復元する） ----
         def tm(m):
@@ -617,6 +616,114 @@ def main():
             assert page.get_by_test_id('preview').locator('div').nth(1).inner_text() == '12月2日（水）\u3000OP-LA'
             page.click('[data-cp="close"]')
         check('CF-12', '再起動後も確定が残り、希望・LINEコピーは確定の影響を受けない', cf_persist)
+
+        # ---- 段階③：給料計算（unit test と同じ手計算の値で確認） ----
+        def cfr(a, b, brk=0, solo=False, wage=None):
+            return {'start': a, 'end': b, 'breakMinutes': brk, 'solo': solo, 'hourlyWage': wage, 'memo': '', 'updatedAt': '2026-11-27T00:00:00Z'}
+        pay_seed = json.loads(json.dumps(seed))
+        pay_seed['data']['hopes'] = {
+            '2026-11-10': rec(rng(tm(1140), tm(1380))),
+            '2026-11-11': rec(rng({'kind': 'open'}, {'kind': 'last'})),
+        }
+        pay_seed['data']['confirmed'] = {
+            '2026-11-02': cfr(1140, 1380),
+            '2026-11-03': cfr(1080, 1740, 60, True),
+            '2026-11-04': cfr(600, 930, 30, False, 1100),
+            '2026-11-06': cfr(1140, 1147, 0, False, 1111),
+            '2026-12-01': cfr(1140, 1380),
+        }
+
+        def pay_seeded():
+            f = OUT / 'seed_pay.json'
+            f.write_text(json.dumps(pay_seed), encoding='utf-8')
+            page.click('.tabbar [data-tab="other"]')
+            page.get_by_test_id('restore-file').set_input_files(str(f))
+            with page.expect_download():
+                page.get_by_test_id('restore-confirm').click()
+            expect(page.get_by_test_id('toast')).to_have_text('復元しました')
+            page.click('.tabbar [data-tab="pay"]')
+            expect(page.locator('.pt-main')).to_have_text('2026年12月15日')
+            expect(page.get_by_test_id('no-wage')).to_be_visible()
+            expect(page.get_by_test_id('pay-days')).to_have_text('4日')
+        check('PAY-01', '時給未設定では案内を表示（出勤日数は数える）', pay_seeded)
+
+        def pay_settings():
+            page.click('.pay-page [data-action="settings"]')
+            expect(page.locator('#pay-title')).to_have_text('給料の設定')
+            page.fill('[data-ps-f="hourlyWage"]', '1200.5')
+            page.click('[data-ps="save"]')
+            expect(page.get_by_test_id('toast')).to_contain_text('不正な値')
+            page.fill('[data-ps-f="hourlyWage"]', '1200')
+            page.fill('[data-ps-f="soloBonus"]', '100')
+            page.fill('[data-ps-f="transportPerDay"]', '420')
+            page.fill('[data-ps-f="monthlyTarget"]', '80000')
+            expect(page.get_by_test_id('ps-example')).to_have_text('末日締め、翌月15日払い。')
+            page.click('[data-ps="save"]')
+            expect(page.locator('#pay-title')).to_have_count(0)
+            expect(page.get_by_test_id('pay-total')).to_have_text('¥27,684')
+            expect(page.get_by_test_id('pay-hours')).to_have_text('19時間7分')
+            expect(page.get_by_test_id('pay-night')).to_have_text('¥2,575')
+            expect(page.get_by_test_id('pay-solo')).to_have_text('¥1,000')
+            expect(page.get_by_test_id('pay-transport')).to_have_text('¥1,680')
+            expect(page.get_by_test_id('pay-base')).to_have_text('¥22,429')
+            expect(page.get_by_test_id('pay-target')).to_have_text('あと ¥52,316')
+            expect(page.get_by_test_id('pay-hope')).to_contain_text('＋¥5,520（1日）')
+            expect(page.locator('.pay-row')).to_have_count(4)
+            page.screenshot(path=OUT / 'v2_12_pay.png', full_page=True)
+        check('PAY-02', '給料の設定→見込み給料・内訳・目標・希望の見込み', pay_settings)
+
+        def pay_nav():
+            page.click('.pay-nav [data-action="next"]')
+            expect(page.locator('.pt-main')).to_have_text('2027年1月15日')
+            expect(page.get_by_test_id('pay-total')).to_have_text('¥5,520')
+            page.click('.pay-title')
+            expect(page.locator('.pt-main')).to_have_text('2026年12月15日')
+        check('PAY-03', '給料日の切り替え（12月の勤務は1月15日払い）', pay_nav)
+
+        def payday_badge():
+            page.click('.tabbar [data-tab="confirmed"]')
+            show_dec()
+            expect(cell(page, '2026-12-15').locator('.pay-badge')).to_be_visible()
+            expect(cell(page, '2026-12-14').locator('.pay-badge')).to_have_count(0)
+            cell(page, '2026-12-15').click()
+            expect(page.get_by_test_id('payday-line')).to_contain_text('¥27,684')
+            page.get_by_test_id('payday-line').click()
+            expect(page.locator('.pt-main')).to_have_text('2026年12月15日')
+        check('PAY-04', '確定カレンダーの給料日に¥印、タップで給料計算へ', payday_badge)
+
+        def pay_closing():
+            page.click('.pay-page [data-action="settings"]')
+            page.select_option('[data-ps-f="closingDay"]', '15')
+            page.select_option('[data-ps-f="payMonthOffset"]', '0')
+            page.select_option('[data-ps-f="payDay"]', '25')
+            expect(page.get_by_test_id('ps-example')).to_have_text('15日締め、当月25日払い。')
+            page.click('[data-ps="save"]')
+            page.click('.pay-title')
+            expect(page.locator('.pt-main')).to_have_text('2026年12月25日')
+            expect(page.locator('.ph-sub')).to_have_text('11月16日〜12月15日の勤務')
+            expect(page.get_by_test_id('pay-total')).to_have_text('¥5,520')
+            page.click('.pay-page [data-action="settings"]')
+            page.select_option('[data-ps-f="closingDay"]', '0')
+            page.select_option('[data-ps-f="payMonthOffset"]', '1')
+            page.select_option('[data-ps-f="payDay"]', '15')
+            page.click('[data-ps="save"]')
+            page.click('.pay-title')
+            expect(page.get_by_test_id('pay-total')).to_have_text('¥27,684')
+        check('PAY-05', '締め日・給料日を変えると対象期間が変わる', pay_closing)
+
+        def pay_persist():
+            page.wait_for_timeout(400)
+            page.reload()
+            page.click('.tabbar [data-tab="pay"]')
+            expect(page.get_by_test_id('pay-total')).to_have_text('¥27,684')
+            page.click('.tabbar [data-tab="other"]')
+            expect(page.locator('.pay-summary')).to_have_text('時給1,200円')
+            page.emulate_media(color_scheme='dark')
+            page.click('.tabbar [data-tab="pay"]')
+            page.screenshot(path=OUT / 'v2_13_pay_dark.png')
+            page.emulate_media(color_scheme='light')
+            page.click('.tabbar [data-tab="hope"]')
+        check('PAY-06', '再起動後も給料の設定と計算が残る', pay_persist)
 
         def t30():
             page.evaluate("""() => {

@@ -4,7 +4,7 @@ import { el, esc } from './dom.js';
 import { createHopeScreen } from './screens/hopeScreen.js';
 import { createOtherScreen } from './screens/otherScreen.js';
 import { createConfirmedScreen } from './screens/confirmedScreen.js';
-import { createPlaceholderScreen } from './screens/placeholderScreen.js';
+import { createPayScreen } from './screens/payScreen.js';
 import { createDialog } from './components/dialogs.js';
 import { icons } from './icons.js';
 
@@ -22,7 +22,7 @@ export function mountApp(mount, c, opts) {
   const screens = {
     hope: createHopeScreen(c, opts.now),
     confirmed: createConfirmedScreen(c, opts.now),
-    pay: createPlaceholderScreen('給料計算', '給料計算は確定シフトのあとに追加します。'),
+    pay: createPayScreen(c, opts.now),
     other: createOtherScreen(c, opts.version),
   };
   /** @type {[Tab, string, string][]} */

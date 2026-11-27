@@ -1,6 +1,6 @@
 /* Service Worker：アプリ資産をキャッシュしてオフラインで使えるようにする。
  * 保存データ（IndexedDB）には触れない。ファイルを更新したら CACHE_VERSION を上げること。 */
-const CACHE_VERSION = 'shift-manager-v2.1.1';
+const CACHE_VERSION = 'shift-manager-v2.2.0';
 const ASSETS = [
   './',
   './index.html',
@@ -14,6 +14,7 @@ const ASSETS = [
   './src/domain/confirmed.js',
   './src/domain/formatter.js',
   './src/domain/history.js',
+  './src/domain/pay.js',
   './src/domain/shift.js',
   './src/domain/templates.js',
   './src/domain/types.js',
@@ -30,6 +31,7 @@ const ASSETS = [
   './src/ui/components/confirmedSheet.js',
   './src/ui/components/dialogs.js',
   './src/ui/components/entryEditor.js',
+  './src/ui/components/paySettingsPage.js',
   './src/ui/components/periodChooser.js',
   './src/ui/components/timePicker.js',
   './src/ui/components/wheel.js',
@@ -39,7 +41,7 @@ const ASSETS = [
   './src/ui/screens/copyScreen.js',
   './src/ui/screens/hopeScreen.js',
   './src/ui/screens/otherScreen.js',
-  './src/ui/screens/placeholderScreen.js',
+  './src/ui/screens/payScreen.js',
 ];
 
 self.addEventListener('install', (event) => {

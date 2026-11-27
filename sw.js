@@ -1,6 +1,6 @@
 /* Service Worker：アプリ資産をキャッシュしてオフラインで使えるようにする。
  * 保存データ（IndexedDB）には触れない。ファイルを更新したら CACHE_VERSION を上げること。 */
-const CACHE_VERSION = 'shift-manager-v2.1.0';
+const CACHE_VERSION = 'shift-manager-v2.1.1';
 const ASSETS = [
   './',
   './index.html',

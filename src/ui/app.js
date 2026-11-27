@@ -27,8 +27,8 @@ export function mountApp(mount, c, opts) {
   };
   /** @type {[Tab, string, string][]} */
   const tabs = [
-    ['hope', '希望シフト', icons.tabHope],
     ['confirmed', '確定シフト', icons.tabConfirmed],
+    ['hope', '希望シフト', icons.tabHope],
     ['pay', '給料計算', icons.tabPay],
     ['other', 'その他', icons.tabOther],
   ];

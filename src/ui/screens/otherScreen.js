@@ -1,8 +1,13 @@
 // @ts-check
-/** その他タブ（docs/v2_redesign.md §3.7。段階①：曜日のいつもの（希望）、まとめて入力、挨拶文、バックアップ、情報） */
+/** その他タブ（docs/v2_redesign.md §3.7。曜日のいつもの、まとめて入力、オープン・ラストの時刻、挨拶文、バックアップ、情報） */
 import { el, esc, delegate } from '../dom.js';
-import { WEEKDAYS, periodOptionsAround, periodShortLabel, periodKey, periodRangeLabel } from '../../domain/calendar.js';
+import { WEEKDAYS } from '../../domain/calendar.js';
 import { formatShift } from '../../domain/formatter.js';
+import { minutesToClock } from '../../domain/shift.js';
+import { formatConfirmed, confirmedDetail, makeConfirmed } from '../../domain/confirmed.js';
+import { choosePeriod } from '../components/periodChooser.js';
+import { openConfirmedEditor } from '../components/confirmedEditor.js';
+import { createTimePicker } from '../components/timePicker.js';
 import { openAddSheet } from '../components/addSheet.js';
 import { openEntryEditor } from '../components/entryEditor.js';
 import { createDialog } from '../components/dialogs.js';
@@ -25,6 +30,13 @@ export function createOtherScreen(c, version) {
           <button type="button" class="row link" data-action="fill">希望をいつもので埋める…</button>
         </div>
         <p class="section-footer">前半・後半を選ぶと、未入力の日だけを曜日のいつもので埋めます（入力済みの日は変えません）。</p>
+
+        <div class="section-header">確定シフト</div>
+        <div class="group open-last-group"></div>
+        <p class="section-footer">「希望どおり」で OP・LA や ○ の希望を確定にするときに、この時刻を使います。</p>
+        <div class="section-header">曜日のいつもの（確定シフト）</div>
+        <div class="group weekday-cf-group"></div>
+        <p class="section-footer">確定シフトの入力シートにワンタップで出します。確定シフトタブの「まとめて確定」からも使えます。</p>
 
         <div class="section-header">挨拶文（LINE提出用コピー）</div>
         <div class="group">
@@ -52,6 +64,8 @@ export function createOtherScreen(c, version) {
 
   const banners = /** @type {HTMLElement} */ (root.querySelector('.banners'));
   const weekdayGroup = /** @type {HTMLElement} */ (root.querySelector('.weekday-group'));
+  const weekdayCfGroup = /** @type {HTMLElement} */ (root.querySelector('.weekday-cf-group'));
+  const openLastGroup = /** @type {HTMLElement} */ (root.querySelector('.open-last-group'));
   const toggle = /** @type {HTMLInputElement} */ (root.querySelector('[data-testid="settings-greet"]'));
   const fileInput = /** @type {HTMLInputElement} */ (root.querySelector('input[type=file]'));
   const areas = /** @type {HTMLTextAreaElement[]} */ ([...root.querySelectorAll('textarea')]);
@@ -106,27 +120,63 @@ export function createOtherScreen(c, version) {
   }
 
   function chooseFillPeriod() {
-    const options = periodOptionsAround(c.getState().month);
-    const body = el(`<div class="dialog-choices">${options.map((p) => `
-      <button type="button" data-key="${periodKey(p)}">${p.year}年${esc(periodShortLabel(p))}<span>${esc(periodRangeLabel(p))}</span></button>`).join('')}</div>`);
-    const dlg = createDialog({
+    choosePeriod({
       title: '希望をいつもので埋める',
       message: '未入力の日だけを曜日のいつもので埋めます。',
-      body,
-      actions: [{ label: 'キャンセル', onClick: () => dlg.remove() }],
+      around: c.getState().month,
+      onPick: (p) => c.fillHopesFromTemplates(p),
     });
-    body.addEventListener('click', (ev) => {
-      const b = /** @type {HTMLElement} */ (ev.target).closest('button');
-      const p = options.find((o) => periodKey(o) === b?.dataset.key);
-      if (!p) return;
-      dlg.remove();
-      c.fillHopesFromTemplates(p);
+  }
+
+  /** @param {number} wd */
+  function editConfirmedTemplate(wd) {
+    const cur = c.getState().data.weekdayTemplates[String(wd)]?.confirmed;
+    const name = `${WEEKDAYS[wd]}曜日のいつもの（確定）`;
+    const open = () => openConfirmedEditor({
+      title: name,
+      targetLabel: `毎週${WEEKDAYS[wd]}曜日の確定シフト`,
+      initial: makeConfirmed(cur ?? { start: 19 * 60, end: 23 * 60, breakMinutes: 0 }),
+      timesOnly: true,
+      doneLabel: '登録する',
+      onDone: (cs) => c.setConfirmedTemplate(wd, cs),
+    });
+    if (!cur) { open(); return; }
+    const dlg = createDialog({
+      title: name,
+      message: `${formatConfirmed(cur)}${confirmedDetail(cur) ? `（${confirmedDetail(cur)}）` : ''}`,
+      actions: [
+        { label: '削除', style: 'destructive', onClick: () => { dlg.remove(); c.setConfirmedTemplate(wd, null); } },
+        { label: '変更', style: 'strong', onClick: () => { dlg.remove(); open(); } },
+      ],
     });
     document.body.appendChild(dlg);
   }
 
+  /** @param {'openTime' | 'lastTime'} field */
+  function editOpenLast(field) {
+    const cur = c.getState().data.pay[field];
+    let value = cur ?? (field === 'openTime' ? 10 * 60 : 29 * 60);
+    const picker = createTimePicker({ value, label: field === 'openTime' ? 'オープン' : 'ラスト', onChange: (v) => { value = v; } });
+    const body = el(`<div class="dialog-picker"></div>`);
+    body.appendChild(picker.el);
+    const dlg = createDialog({
+      title: field === 'openTime' ? 'オープン（OP）の時刻' : 'ラスト（LA）の時刻',
+      message: '30時は翌朝6時です。',
+      body,
+      actions: [
+        { label: 'キャンセル', onClick: () => dlg.remove() },
+        ...(cur !== null ? [{ label: '未設定にする', onClick: () => { dlg.remove(); c.setOpenLastTime(field, null); } }] : []),
+        { label: '設定', style: /** @type {'strong'} */ ('strong'), testid: 'time-set', onClick: () => { dlg.remove(); c.setOpenLastTime(field, value); } },
+      ],
+    });
+    document.body.appendChild(dlg);
+    picker.attach();
+  }
+
   delegate(root, {
     template: (t) => editTemplate(Number(t.dataset.wd)),
+    'template-cf': (t) => editConfirmedTemplate(Number(t.dataset.wd)),
+    'open-last': (t) => editOpenLast(/** @type {'openTime' | 'lastTime'} */ (t.dataset.field)),
     fill: () => chooseFillPeriod(),
     export: () => {
       flushAll();
@@ -149,6 +199,19 @@ export function createOtherScreen(c, version) {
         return `<button type="button" class="row" data-action="template" data-wd="${i}">
             <span class="grow wd-name ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}曜日</span>
             <span class="sub ${t ? 'set' : ''}">${t ? esc(formatShift(t)) : '未登録'}</span><span class="chev" aria-hidden="true">›</span>
+          </button>`;
+      }).join('');
+      weekdayCfGroup.innerHTML = WEEKDAYS.map((w, i) => {
+        const t = s.data.weekdayTemplates[String(i)]?.confirmed;
+        return `<button type="button" class="row" data-action="template-cf" data-wd="${i}">
+            <span class="grow wd-name ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}曜日</span>
+            <span class="sub ${t ? 'set' : ''}">${t ? esc([formatConfirmed(t), t.breakMinutes ? `休憩${t.breakMinutes}分` : ''].filter(Boolean).join(' ')) : '未登録'}</span><span class="chev" aria-hidden="true">›</span>
+          </button>`;
+      }).join('');
+      openLastGroup.innerHTML = /** @type {const} */ ([['openTime', 'オープン（OP）の時刻'], ['lastTime', 'ラスト（LA）の時刻']]).map(([f, label]) => {
+        const v = s.data.pay[f];
+        return `<button type="button" class="row" data-action="open-last" data-field="${f}">
+            <span class="grow">${label}</span><span class="sub ${v !== null ? 'set' : ''}">${v !== null ? minutesToClock(v) : '未設定'}</span><span class="chev" aria-hidden="true">›</span>
           </button>`;
       }).join('');
       for (const ta of areas) {

@@ -3,6 +3,7 @@
 import { el, esc } from './dom.js';
 import { createHopeScreen } from './screens/hopeScreen.js';
 import { createOtherScreen } from './screens/otherScreen.js';
+import { createConfirmedScreen } from './screens/confirmedScreen.js';
 import { createPlaceholderScreen } from './screens/placeholderScreen.js';
 import { createDialog } from './components/dialogs.js';
 import { icons } from './icons.js';
@@ -20,7 +21,7 @@ export function mountApp(mount, c, opts) {
   /** @type {Record<Tab, { el: HTMLElement, update: (s: State) => void, onLeave?: () => void }>} */
   const screens = {
     hope: createHopeScreen(c, opts.now),
-    confirmed: createPlaceholderScreen('確定シフト', '確定シフトの入力は次の更新で使えるようになります。希望シフトを見ながら「希望どおり」ボタンなどで入力できるようにする予定です。'),
+    confirmed: createConfirmedScreen(c, opts.now),
     pay: createPlaceholderScreen('給料計算', '給料計算は確定シフトのあとに追加します。'),
     other: createOtherScreen(c, opts.version),
   };

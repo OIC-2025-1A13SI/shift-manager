@@ -4,7 +4,8 @@
 仕様は [docs/v2_redesign.md](docs/v2_redesign.md)（v2、シフトボード準拠のリメイク）と、そこで変更していない部分は [docs/shift_manager_design.md](docs/shift_manager_design.md)（v1.1）を基準とする。
 
 - v2.0.0（段階①）：希望シフトの月カレンダー／リスト、追加シート（曜日のいつもの・○×・履歴とピン留め）、時・分2列ホイールの入力画面、LINE提出用コピー、曜日のいつもので一括入力
-- 予定：段階② 確定シフト、段階③ 給料計算
+- v2.1.0（段階②）：確定シフトのカレンダー（希望を参考表示）、「希望どおり」1タップ確定、まとめて確定、曜日のいつもの（確定）、確定の履歴、休憩・一人シフト・時給・メモ、オープン・ラストの時刻
+- 予定：段階③ 給料計算
 
 公開URL：https://oic-2025-1a13si.github.io/shift-manager/ （GitHub Pages、`main` ブランチのルート）
 
@@ -18,10 +19,10 @@ shift-manager/
 ├─ icons/                                     アプリアイコン（仮デザイン）
 ├─ src/
 │  ├─ main.js                                 起動（依存の組み立て）
-│  ├─ domain/      calendar, shift, history, formatter, templates, appData, types
+│  ├─ domain/      calendar, shift, history, formatter, templates, confirmed, appData, types
 │  ├─ application/ controller.js              状態管理・操作制御（UI はここ経由のみ）
 │  ├─ infrastructure/ storage(IndexedDB), clipboard, backup, fileSaver
-│  ├─ ui/          app.js（タブ）, screens/(希望シフト・LINEコピー・その他・準備中), components/(追加シート・入力画面・2列ホイール・ダイアログ)
+│  ├─ ui/          app.js（タブ）, screens/(希望シフト・確定シフト・LINEコピー・その他・準備中), components/(カレンダー・追加シート・入力画面・2列ホイール・ダイアログ)
 │  └─ styles/app.css
 ├─ tests/          単体テスト（node:test）、e2e/（Playwright）
 └─ docs/v2_redesign.md, shift_manager_design.md
@@ -60,9 +61,9 @@ python tests/e2e/e2e_test.py      # E2E（要: pip install playwright && playwri
 iPhone のデータは Safari の履歴・データ消去やホーム画面アプリの削除で消えることがあるため、定期的に書き出すこと。
 「バックアップから復元」は全置換（Q10）。復元前に現在のデータを書き出し、書き出しをキャンセルした場合は復元しない。
 
-## 受入テスト結果（v2.0.0、2026-11-27、PC上のヘッドレス Chrome・iPhone 相当の画面サイズ）
+## 受入テスト結果（v2.1.0、2026-11-27、PC上のヘッドレス Chrome・iPhone 相当の画面サイズ）
 
-単体テスト 55件、E2E 26項目すべて合格（E2E は3回連続で合格を確認）。
+単体テスト 63件、E2E 38項目すべて合格（E2E は3回連続で合格を確認）。
 
 | 項目 | 結果 | 内容 |
 |---|---|---|
@@ -75,6 +76,7 @@ iPhone のデータは Safari の履歴・データ消去やホーム画面ア�
 | 保存・復元（T23〜T27、移行） | 合格 | 再起動後に復元、v2 バックアップの書出し・復元、v1 のバックアップも読める、壊れたファイルは拒否 |
 | T28 / T29 | 合格（PC） | ダークモード（エミュレーション）、オフライン。**iPhone 実機は未検証** |
 | T30 / T31 | 合格 | コピー失敗時の手動コピー、保存失敗の表示 |
+| 確定シフト（CF-01〜12） | 合格 | 希望の参考表示、希望どおり1タップ、OP/LA の時刻の登録、休憩・一人・時給・メモ、不正値は完了不可、×の日は希望どおりなし、まとめて確定（確定済みは変えない）、曜日のいつもの（確定）、履歴・取り消し・複数選択、再起動後も残る、希望・LINEコピーに影響しない |
 | T32 | **未検証** | iPhone 実機での操作感（2列ホイール、スワイプでの月移動、シート） |
 
 ## 実装上の解釈（v1：設計書 §11.1 補足、v2：docs/v2_redesign.md §8）

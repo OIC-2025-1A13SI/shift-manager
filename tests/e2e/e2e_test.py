@@ -414,12 +414,209 @@ def main():
         check('T27', '壊れたJSONはエラー、現データ保持', broken)
 
         def placeholder():
-            page.click('.tabbar [data-tab="confirmed"]')
-            expect(page.locator('.empty-state')).to_contain_text('準備中')
             page.click('.tabbar [data-tab="pay"]')
             expect(page.locator('.empty-state')).to_contain_text('準備中')
             page.click('.tabbar [data-tab="hope"]')
-        check('TAB', '確定シフト・給料計算タブは準備中表示', placeholder)
+        check('TAB', '給料計算タブは準備中表示', placeholder)
+
+        # ---- 段階②：確定シフト（既知のデータから始めるため、用意したバックアップを復元する） ----
+        def tm(m):
+            return {'kind': 'time', 'minutes': m}
+        def rec(shift):
+            return {'shift': shift, 'updatedAt': '2026-11-27T00:00:00Z'}
+        def rng(a, b):
+            return {'kind': 'range', 'start': a, 'end': b}
+        seed = {'app': 'shift-manager', 'format': 1, 'exportedAt': '2026-11-27T00:00:00Z', 'data': {
+            'schemaVersion': 2,
+            'hopes': {
+                '2026-12-01': rec(rng(tm(1140), tm(1380))),
+                '2026-12-02': rec(rng({'kind': 'open'}, {'kind': 'last'})),
+                '2026-12-03': rec(rng(tm(1140), {'kind': 'none'})),
+                '2026-12-04': rec({'kind': 'unavailable'}),
+                '2026-12-05': rec({'kind': 'available'}),
+                '2026-12-08': rec(rng(tm(1020), tm(1320))),
+            },
+            'confirmed': {}, 'hopeHistory': [], 'confirmedHistory': [], 'weekdayTemplates': {},
+            'pay': {'hourlyWage': None, 'nightStart': 1320, 'nightEnd': 1740, 'nightRatePercent': 25, 'soloBonus': 0,
+                    'transportPerDay': 0, 'closingDay': 0, 'payMonthOffset': 1, 'payDay': 15, 'monthlyTarget': 0,
+                    'openTime': None, 'lastTime': None},
+            'periods': {}, 'settings': {'greetingEnabled': False, 'greetingPrefix': '', 'greetingSuffix': ''}}}
+
+        def cf_add():
+            page.locator('.day-panel [data-action="add"]').click()
+            expect(page.locator('.sheet')).to_be_visible()
+
+        def cf_seed():
+            f = OUT / 'seed_cf.json'
+            f.write_text(json.dumps(seed), encoding='utf-8')
+            page.click('.tabbar [data-tab="other"]')
+            page.get_by_test_id('restore-file').set_input_files(str(f))
+            with page.expect_download():
+                page.get_by_test_id('restore-confirm').click()
+            expect(page.get_by_test_id('toast')).to_have_text('復元しました')
+            page.click('.tabbar [data-tab="confirmed"]')
+            show_dec()
+            expect(cell(page, '2026-12-01').locator('.cal-val.ref')).to_have_text('19-23')
+            expect(cell(page, '2026-12-04').locator('.cal-val.ref')).to_have_text('×')
+            page.screenshot(path=OUT / 'v2_09_confirmed.png')
+        check('CF-01', '確定タブ：未確定の日は希望を参考表示', cf_seed)
+
+        def cf_ashope():
+            cell(page, '2026-12-01').click()
+            expect(page.get_by_test_id('panel-hope')).to_contain_text('19-23')
+            cf_add()
+            expect(page.locator('[data-cs="ashope"]')).to_contain_text('希望どおりに確定（19-23）')
+            page.screenshot(path=OUT / 'v2_10_cf_sheet.png')
+            page.click('[data-cs="ashope"]')
+            expect(cell(page, '2026-12-01').locator('.cal-val.cf')).to_have_text('19-23')
+            assert 'selected' in cell(page, '2026-12-02').get_attribute('class')
+        check('CF-02', '希望どおりで1タップ確定→翌日へ', cf_ashope)
+
+        def cf_oplast_unset():
+            cf_add()
+            expect(page.locator('[data-cs="ashope"]')).to_have_text('希望をもとに確定…')
+            page.click('[data-cs="ashope"]')
+            expect(page.get_by_test_id('cf-note')).to_contain_text('オープン・ラストの時刻が未設定です')
+            expect(page.get_by_test_id('cf-hope')).to_contain_text('OP-LA')
+            page.click('[data-cf="close"]')
+            expect(cell(page, '2026-12-02').locator('.cal-val.cf')).to_have_count(0)
+        check('CF-03', 'OP/LAの時刻が未設定なら入力画面へ案内', cf_oplast_unset)
+
+        def cf_oplast_set():
+            page.click('.tabbar [data-tab="other"]')
+            page.click('[data-action="open-last"][data-field="openTime"]')
+            page.get_by_test_id('time-set').click()
+            page.click('[data-action="open-last"][data-field="lastTime"]')
+            page.get_by_test_id('time-set').click()
+            expect(page.locator('[data-action="open-last"][data-field="openTime"]')).to_contain_text('10:00')
+            expect(page.locator('[data-action="open-last"][data-field="lastTime"]')).to_contain_text('29:00')
+            page.click('.tabbar [data-tab="confirmed"]')
+            cell(page, '2026-12-02').click()
+            cf_add()
+            expect(page.locator('[data-cs="ashope"]')).to_contain_text('（10-29）')
+            page.click('[data-cs="ashope"]')
+            expect(cell(page, '2026-12-02').locator('.cal-val.cf')).to_have_text('10-29')
+        check('CF-04', 'OP/LAの時刻を登録すると希望どおりで確定できる', cf_oplast_set)
+
+        def cf_editor():
+            cell(page, '2026-12-03').click()
+            cf_add()
+            page.click('[data-cs="ashope"]')
+            expect(page.get_by_test_id('cf-note')).to_contain_text('時刻が決まっていません')
+            expect(page.locator('[data-cf="chip"][data-key="start"]')).to_have_text('19:00')
+            page.click('[data-cf="chip"][data-key="end"]')
+            vp = page.locator('[data-slot="end"] .wheel-vp').nth(0)
+            vp.focus()
+            vp.press('Home')  # 10時 → 開始より前
+            expect(page.get_by_test_id('cf-error')).to_be_visible()
+            expect(page.locator('[data-cf="done"]')).to_be_disabled()
+            vp.press('End')  # 30時
+            page.click('[data-cf="break"][data-min="30"]')
+            page.get_by_test_id('cf-solo').check()
+            page.get_by_test_id('cf-wage').fill('1300')
+            page.get_by_test_id('cf-memo').fill('棚卸し')
+            expect(page.get_by_test_id('cf-output')).to_have_text('19-30')
+            expect(page.get_by_test_id('cf-detail')).to_have_text('休憩30分・一人・時給1,300円')
+            page.get_by_test_id('cf-break').fill('700')
+            expect(page.locator('[data-cf="done"]')).to_be_disabled()
+            page.click('[data-cf="break"][data-min="30"]')
+            page.screenshot(path=OUT / 'v2_11_cf_editor.png')
+            page.click('[data-cf="done"]')
+            expect(cell(page, '2026-12-03').locator('.cal-val.cf')).to_have_text('19-30')
+            cell(page, '2026-12-03').click()
+            expect(page.locator('.day-entry')).to_contain_text('休憩30分・一人・時給1,300円')
+            expect(page.locator('.day-entry')).to_contain_text('棚卸し')
+        check('CF-05', '入力画面：休憩・一人シフト・時給・メモ、不正値は完了不可', cf_editor)
+
+        def cf_unavailable():
+            cell(page, '2026-12-04').click()
+            cf_add()
+            expect(page.get_by_test_id('sheet-hope')).to_contain_text('×')
+            expect(page.locator('[data-cs="ashope"]')).to_have_count(0)
+            page.locator('.backdrop').click(position={'x': 10, 'y': 10})
+        check('CF-06', '希望が×の日は希望どおりボタンを出さない', cf_unavailable)
+
+        def cf_bulk():
+            page.click('[data-action="bulk"]')
+            page.click('.dialog-choices [data-k="hope"]')
+            page.click('.dialog-choices [data-key="2026-12-first"]')
+            expect(page.get_by_test_id('toast')).to_have_text('2日を確定しました')
+            expect(cell(page, '2026-12-05').locator('.cal-val.cf')).to_have_text('10-29')
+            expect(cell(page, '2026-12-08').locator('.cal-val.cf')).to_have_text('17-22')
+            expect(cell(page, '2026-12-03').locator('.cal-val.cf')).to_have_text('19-30')
+        check('CF-07', '希望どおりにまとめて確定（確定済みは変えない）', cf_bulk)
+
+        def cf_template():
+            page.click('.tabbar [data-tab="other"]')
+            page.click('[data-action="template-cf"][data-wd="3"]')
+            expect(page.locator('#cf-title')).to_have_text('水曜日のいつもの（確定）')
+            expect(page.get_by_test_id('cf-solo')).to_have_count(0)
+            page.click('[data-cf="break"][data-min="15"]')
+            page.click('[data-cf="done"]')
+            expect(page.locator('[data-action="template-cf"][data-wd="3"]')).to_contain_text('19-23 休憩15分')
+            page.click('.tabbar [data-tab="confirmed"]')
+            page.click('[data-action="bulk"]')
+            page.click('.dialog-choices [data-k="tpl"]')
+            page.click('.dialog-choices [data-key="2026-12-first"]')
+            expect(page.get_by_test_id('toast')).to_have_text('1日を確定しました')
+            expect(cell(page, '2026-12-09').locator('.cal-val.cf')).to_have_text('19-23')
+            cell(page, '2026-12-16').click()
+            cf_add()
+            expect(page.locator('[data-cs="template"]')).to_contain_text('休憩15分')
+            page.click('[data-cs="template"]')
+            expect(cell(page, '2026-12-16').locator('.cal-val.cf')).to_have_text('19-23')
+        check('CF-08', '曜日のいつもの（確定）：登録・まとめて・ワンタップ', cf_template)
+
+        def cf_history_clear():
+            cell(page, '2026-12-10').click()
+            cf_add()
+            cards = page.locator('.hist-card .hist-main')
+            texts = [cards.nth(i).inner_text() for i in range(cards.count())]
+            assert any('休憩30分' in t for t in texts), texts
+            page.locator('.hist-card').filter(has_text='休憩30分').locator('.hist-main').click()
+            expect(cell(page, '2026-12-10').locator('.cal-val.cf')).to_have_text('19-30')
+            cell(page, '2026-12-10').click()
+            expect(page.locator('.day-entry')).not_to_contain_text('一人')
+            cf_add()
+            page.click('[data-cs="clear"]')
+            expect(cell(page, '2026-12-10').locator('.cal-val.cf')).to_have_count(0)
+            assert 'selected' in cell(page, '2026-12-10').get_attribute('class')
+        check('CF-09', '確定の履歴から入力・確定を取り消す', cf_history_clear)
+
+        def cf_edit_existing():
+            cell(page, '2026-12-03').click()
+            page.click('.day-entry')
+            expect(page.locator('#cf-title')).to_have_text('確定シフトの編集')
+            expect(page.get_by_test_id('cf-solo')).to_be_checked()
+            expect(page.get_by_test_id('cf-wage')).to_have_value('1300')
+            page.click('[data-cf="close"]')
+        check('CF-10', '確定済みの日は編集画面に現在の値', cf_edit_existing)
+
+        def cf_multi():
+            page.click('[data-action="multi"]')
+            for d in ('2026-12-11', '2026-12-12'):
+                cell(page, d).click()
+            cf_add()
+            page.click('[data-cs="new"]')
+            page.click('[data-cf="done"]')
+            expect(cell(page, '2026-12-11').locator('.cal-val.cf')).to_be_visible()
+            expect(cell(page, '2026-12-12').locator('.cal-val.cf')).to_be_visible()
+        check('CF-11', '複数選択でまとめて確定入力', cf_multi)
+
+        def cf_persist():
+            page.wait_for_timeout(400)
+            page.reload()
+            page.click('.tabbar [data-tab="confirmed"]')
+            show_dec()
+            expect(cell(page, '2026-12-03').locator('.cal-val.cf')).to_have_text('19-30')
+            page.click('.tabbar [data-tab="hope"]')
+            expect(cell(page, '2026-12-03')).to_contain_text('19-')
+            expect(cell(page, '2026-12-01')).to_contain_text('19-23')
+            page.click('[data-action="copy"]')
+            page.click('.period-chip[data-key="2026-12-first"]')
+            assert page.get_by_test_id('preview').locator('div').nth(1).inner_text() == '12月2日（水）\u3000OP-LA'
+            page.click('[data-cp="close"]')
+        check('CF-12', '再起動後も確定が残り、希望・LINEコピーは確定の影響を受けない', cf_persist)
 
         def t30():
             page.evaluate("""() => {

@@ -6,7 +6,7 @@ import { writeClipboard } from './infrastructure/clipboard.js';
 import { saveTextFile } from './infrastructure/fileSaver.js';
 import { mountApp } from './ui/app.js';
 
-export const APP_VERSION = '2.0.1';
+export const APP_VERSION = '2.1.0';
 
 const now = () => new Date();
 const controller = createController({

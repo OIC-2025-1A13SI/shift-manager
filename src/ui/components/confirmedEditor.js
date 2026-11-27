@@ -8,6 +8,7 @@ import { el, esc } from '../dom.js';
 import { createTimePicker } from './timePicker.js';
 import { minutesToClock } from '../../domain/shift.js';
 import { validateConfirmed, formatConfirmed, confirmedDetail, makeConfirmed } from '../../domain/confirmed.js';
+import { dayPay, formatYen, formatDuration } from '../../domain/pay.js';
 
 /** @typedef {import('../../domain/types.js').ConfirmedShift} ConfirmedShift */
 
@@ -21,6 +22,7 @@ const BREAK_PRESETS = [0, 15, 30, 45, 60, 90];
  *   note?: string | null,
  *   initial: { start: number, end: number, breakMinutes: number, solo: boolean, hourlyWage: number | null, memo: string },
  *   timesOnly?: boolean,
+ *   pay?: import('../../domain/types.js').PaySettings,
  *   doneLabel?: string,
  *   onDone: (c: ConfirmedShift) => boolean,
  * }} p
@@ -63,6 +65,7 @@ export function openConfirmedEditor(p) {
             <input class="text-input" type="text" maxlength="200" data-testid="cf-memo" placeholder="未入力"></label>
         </div>`}
         <div class="form-result" aria-live="polite"></div>
+        ${p.pay ? '<div class="day-pay" data-testid="cf-pay" aria-live="polite"></div>' : ''}
       </main>
       <div class="form-footer"><button type="button" class="primary-btn" data-cf="done">${esc(p.doneLabel ?? '完了する')}</button></div>
     </div>`);
@@ -105,6 +108,21 @@ export function openConfirmedEditor(p) {
       ? `<span class="ex">確定</span><span class="val" data-testid="cf-output">${esc(formatConfirmed(cur))}</span>${detail ? `<span class="ex" data-testid="cf-detail">${esc(detail)}</span>` : ''}`
       : `<span class="ex">確定</span><span class="err" data-testid="cf-error">${esc(v.reason)}</span>`;
     doneBtn.disabled = !v.ok;
+    // その日の給料（2026-11-27 追加）
+    const payBox = /** @type {HTMLElement | null} */ (page.querySelector('[data-testid="cf-pay"]'));
+    if (payBox && p.pay) {
+      const dp = v.ok ? dayPay(cur, p.pay) : null;
+      if (!v.ok) payBox.innerHTML = '';
+      else if (!dp) payBox.innerHTML = '<span class="dp-label">この日の給料</span><span class="dp-note">基本時給が未設定です（その他 → 給料の設定）</span>';
+      else {
+        const parts = [`勤務${formatDuration(dp.paidMinutes)}`];
+        if (dp.nightPremium) parts.push(`深夜割増${formatYen(dp.nightPremium)}`);
+        if (dp.soloBonus) parts.push(`一人加算${formatYen(dp.soloBonus)}`);
+        if (p.pay.transportPerDay) parts.push(`交通費${formatYen(p.pay.transportPerDay)}は別`);
+        payBox.innerHTML = `<span class="dp-label">この日の給料</span><span class="dp-yen" data-testid="cf-pay-yen">${esc(formatYen(dp.total))}</span>
+          <span class="dp-note">${esc(parts.join('・'))}</span>`;
+      }
+    }
   }
 
   /** @param {'start' | 'end' | null} key */

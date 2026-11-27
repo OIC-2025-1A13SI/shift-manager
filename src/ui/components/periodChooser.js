@@ -1,8 +1,8 @@
 // @ts-check
-/** 前半・後半を選ぶダイアログ（まとめて入力・まとめて確定で共通） */
+/** 前半・後半を選ぶダイアログ（まとめて入力・まとめて確定で共通）。表示中の月の前半・後半だけを出す（2026-11-27 変更） */
 import { el, esc } from '../dom.js';
 import { createDialog } from './dialogs.js';
-import { periodOptionsAround, periodShortLabel, periodKey, periodRangeLabel } from '../../domain/calendar.js';
+import { periodShortLabel, periodKey, periodRangeLabel } from '../../domain/calendar.js';
 
 /** @typedef {import('../../domain/types.js').PeriodRef} PeriodRef */
 /** @typedef {import('../../domain/types.js').MonthRef} MonthRef */
@@ -11,9 +11,10 @@ import { periodOptionsAround, periodShortLabel, periodKey, periodRangeLabel } fr
  * @param {{ title: string, message: string, around: MonthRef, onPick: (p: PeriodRef) => void }} p
  */
 export function choosePeriod(p) {
-  const options = periodOptionsAround(p.around);
+  /** @type {PeriodRef[]} */
+  const options = [{ ...p.around, half: 'first' }, { ...p.around, half: 'second' }];
   const body = el(`<div class="dialog-choices">${options.map((o) => `
-    <button type="button" data-key="${periodKey(o)}">${o.year}年${esc(periodShortLabel(o))}<span>${esc(periodRangeLabel(o))}</span></button>`).join('')}</div>`);
+    <button type="button" data-key="${periodKey(o)}">${esc(periodShortLabel(o))}<span>${esc(periodRangeLabel(o))}</span></button>`).join('')}</div>`);
   const dlg = createDialog({
     title: p.title,
     message: p.message,

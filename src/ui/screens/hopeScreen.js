@@ -89,6 +89,10 @@ export function createHopeScreen(c, now) {
     handlers: {
       copy: () => openCopyScreen(c),
       edit: () => openEditor(),
+      // ゴミ箱：確認なしで削除（2026-11-27）
+      delete: () => {
+        if (c.clearHope()) c.notify('希望シフトを削除しました');
+      },
       // 曜日のいつもので未入力の日を埋める（2026-11-27 その他から移動）
       fill: () => choosePeriod({
         title: 'いつもので埋める',
@@ -118,7 +122,10 @@ export function createHopeScreen(c, now) {
       addLabel: (st) => (st.multi ? `${st.multiSelection.length}日にまとめて追加` : 'シフトを追加'),
       panel: (st) => {
         const rec = !st.multi ? hopes[st.selected] : null;
-        return `${rec ? `<button type="button" class="day-entry" data-action="edit" aria-label="${esc(`${shortDate(st.selected)}の希望 ${formatShift(rec.shift)} を編集`)}">${hopeEntryHtml(rec.shift)}<span class="chev" aria-hidden="true">›</span></button>` : ''}
+        return `${rec ? `<div class="day-entry-row">
+            <button type="button" class="day-entry" data-action="edit" aria-label="${esc(`${shortDate(st.selected)}の希望 ${formatShift(rec.shift)} を編集`)}">${hopeEntryHtml(rec.shift)}</button>
+            <button type="button" class="trash-btn" data-action="delete" aria-label="この日の希望シフトを削除">${icons.trash}</button>
+          </div>` : ''}
           <button type="button" class="dashed-add" data-action="add">＋ ${st.multi ? `${st.multiSelection.length}日にまとめて追加` : rec ? 'シフトを変更' : 'シフトを追加'}</button>`;
       },
     });

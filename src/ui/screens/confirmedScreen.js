@@ -13,7 +13,7 @@ import { createDialog } from '../components/dialogs.js';
 import { DEFAULT_START, DEFAULT_END } from '../components/entryEditor.js';
 import { icons } from '../icons.js';
 import { addMonths, monthOf } from '../../domain/calendar.js';
-import { paydayInMonth, summarizePay, formatYen } from '../../domain/pay.js';
+import { paydayInMonth, summarizePay, formatYen, dayPay } from '../../domain/pay.js';
 
 /** @typedef {import('../../application/controller.js').State} State */
 /** @typedef {ReturnType<typeof import('../../application/controller.js').createController>} Controller */
@@ -56,7 +56,8 @@ export function createConfirmedScreen(c, now) {
     openConfirmedEditor({
       title: title || (existing ? '確定シフトの編集' : '確定シフトの入力'),
       targetLabel: s.multi ? `${targets.length}日にまとめて入力` : longDateLabel(s.selected),
-      hopeLabel: hope ? formatShift(hope) : null,
+      hopeLabel: null,
+      pay: s.data.pay,
       note,
       initial: {
         start, end,
@@ -96,17 +97,14 @@ export function createConfirmedScreen(c, now) {
     const hope = single ? s.data.hopes[s.selected]?.shift : undefined;
     let asHopeLabel = null;
     if (!single) asHopeLabel = '選んだ日を希望どおりに確定';
-    else if (hope && hope.kind !== 'unavailable') {
-      const r = hopeToConfirmed(hope, s.data.pay);
-      asHopeLabel = r && r.ok ? `希望をもとに確定（${formatConfirmed({ start: r.start, end: r.end, breakMinutes: 0 })}）` : '希望をもとに確定…';
-    }
+    else if (hope && hope.kind !== 'unavailable') asHopeLabel = '希望をもとに確定';
     const tplShift = single ? s.data.weekdayTemplates[String(weekdayOf(s.selected))]?.hope : undefined;
     const tplR = hopeToConfirmed(tplShift, s.data.pay);
     const tpl = tplR ? (tplR.ok ? formatConfirmed({ start: tplR.start, end: tplR.end, breakMinutes: 0 }) : `${formatShift(/** @type {any} */ (tplShift))}（時間を選ぶ）`) : null;
     const hasValue = targets.some((d) => s.data.confirmed[d]);
     openConfirmedSheet(c, {
       title: single ? `${shortDate(s.selected)} の確定シフト` : `${targets.length}日の確定シフト`,
-      hopeLabel: single ? (hope ? formatShift(hope) : 'なし') : null,
+      hopeLabel: null,
       asHopeLabel,
       template: tpl,
       templateLabel: single ? `${WEEKDAYS[weekdayOf(s.selected)]}曜日のいつもの` : undefined,
@@ -146,6 +144,9 @@ export function createConfirmedScreen(c, now) {
     handlers: {
       bulk: () => openBulkMenu(),
       edit: () => openEditor(),
+      delete: () => {
+        if (c.clearConfirmed()) c.notify('確定シフトを削除しました');
+      },
       payday: () => {
         c.setPayMonth(monthOf(c.getState().selected));
         c.setTab('pay');
@@ -182,9 +183,12 @@ export function createConfirmedScreen(c, now) {
       panel: (st) => {
         if (st.multi) return `<button type="button" class="dashed-add" data-action="add">＋ ${st.multiSelection.length}日にまとめて確定</button>`;
         const cf = confirmed[st.selected];
-        const h = hopes[st.selected];
-        return `${paydayLine(st.selected)}<p class="ref-line" data-testid="panel-hope">希望：<strong>${h ? esc(formatShift(h.shift)) : 'なし'}</strong></p>
-          ${cf ? `<button type="button" class="day-entry" data-action="edit" aria-label="${esc(`${shortDate(st.selected)}の確定 ${formatConfirmed(cf)} を編集`)}">${confirmedEntryHtml(cf)}<span class="chev" aria-hidden="true">›</span></button>` : ''}
+        const dp = cf ? dayPay(cf, pay) : null;
+        return `${paydayLine(st.selected)}
+          ${cf ? `<div class="day-entry-row">
+              <button type="button" class="day-entry" data-action="edit" aria-label="${esc(`${shortDate(st.selected)}の確定 ${formatConfirmed(cf)} を編集`)}">${confirmedEntryHtml(cf)}${dp ? `<span class="entry-yen" data-testid="panel-pay">${esc(formatYen(dp.total))}</span>` : ''}</button>
+              <button type="button" class="trash-btn" data-action="delete" aria-label="この日の確定シフトを削除">${icons.trash}</button>
+            </div>` : ''}
           <button type="button" class="dashed-add" data-action="add">＋ ${cf ? '確定を変更' : '確定を入力'}</button>`;
       },
     });

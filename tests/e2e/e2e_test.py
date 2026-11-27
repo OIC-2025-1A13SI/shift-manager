@@ -223,6 +223,18 @@ def main():
             page.click('.tabbar [data-tab="hope"]')
         check('SHEET', 'シートは✕で閉じられる（その他の曜日のいつものも）', sheet_close)
 
+        def hope_trash():
+            cell(page, '2026-12-06').click()
+            expect(cell(page, '2026-12-06').locator('.cal-val')).to_have_count(1)
+            page.click('.day-panel .trash-btn')
+            expect(page.get_by_test_id('toast')).to_have_text('希望シフトを削除しました')
+            expect(page.locator('.dialog')).to_have_count(0)
+            expect(cell(page, '2026-12-06').locator('.cal-val')).to_have_count(0)
+            assert 'selected' in cell(page, '2026-12-06').get_attribute('class')
+            add_btn()
+            page.click('[data-sh="available"]')  # 後のテストのために戻す
+        check('DEL-H', '希望シフトをゴミ箱で削除（確認なし）', hope_trash)
+
         def overwrite_clear():
             cell(page, '2026-12-07').click()
             expect(page.locator('.day-entry')).to_contain_text('勤務不可')
@@ -317,11 +329,23 @@ def main():
         check('TPL', '曜日のいつもの：登録・まとめて入力（未入力のみ）・ワンタップ', templates)
 
         # ---- LINEコピー ----
+        def periods_month_only():
+            page.click('.topbar [data-action="fill"]')
+            expect(page.locator('.dialog-choices button')).to_have_count(2)
+            keys = [page.locator('.dialog-choices button').nth(i).get_attribute('data-key') for i in range(2)]
+            assert keys == ['2026-12-first', '2026-12-second'], keys
+            page.click('.dialog-actions button')
+            page.click('[data-action="copy"]')
+            expect(page.locator('.period-chip')).to_have_count(2)
+            expect(page.locator('.period-chip').first).to_contain_text('12月前半')
+            page.click('[data-cp="close"]')
+        check('PERIOD', 'いつもので埋める・提出用コピーは表示中の月の前半・後半だけ', periods_month_only)
+
         def copy_cancel():
             page.evaluate("navigator.clipboard.writeText('BEFORE')")
             page.click('[data-action="copy"]')
             expect(page.locator('#copy-title')).to_have_text('LINE提出用コピー')
-            expect(page.locator('.period-chip[aria-checked="true"]')).to_have_text('12月前半')
+            expect(page.locator('.period-chip[aria-checked="true"]')).to_contain_text('12月前半')
             page.screenshot(path=OUT / 'v2_06_copy.png')
             page.click('[data-cp="copy"]')
             expect(page.locator('.dialog')).to_contain_text('未入力の日付が')
@@ -477,9 +501,10 @@ def main():
 
         def cf_ashope():
             cell(page, '2026-12-01').click()
-            expect(page.get_by_test_id('panel-hope')).to_contain_text('19-23')
+            expect(page.locator('.day-panel')).not_to_contain_text('希望')
             cf_add()
-            expect(page.locator('[data-cs="ashope"]')).to_contain_text('希望をもとに確定（19-23）')
+            expect(page.locator('[data-cs="ashope"]')).to_have_text('希望をもとに確定')
+            expect(page.locator('.sheet')).not_to_contain_text('19-23')
             page.screenshot(path=OUT / 'v2_10_cf_sheet.png')
             page.click('[data-cs="ashope"]')
             expect(page.locator('#cf-title')).to_have_text('希望をもとに確定')
@@ -498,10 +523,10 @@ def main():
 
         def cf_oplast_unset():
             cf_add()
-            expect(page.locator('[data-cs="ashope"]')).to_have_text('希望をもとに確定…')
+            expect(page.locator('[data-cs="ashope"]')).to_have_text('希望をもとに確定')
             page.click('[data-cs="ashope"]')
             expect(page.get_by_test_id('cf-note')).to_contain_text('オープン・ラストの時刻が未設定です')
-            expect(page.get_by_test_id('cf-hope')).to_contain_text('OP-LA')
+            expect(page.get_by_test_id('cf-hope')).to_have_count(0)
             page.click('[data-cf="close"]')
             expect(cell(page, '2026-12-02').locator('.cal-val.cf')).to_have_count(0)
         check('CF-03', 'OP/LAの時刻が未設定なら入力画面へ案内', cf_oplast_unset)
@@ -517,7 +542,6 @@ def main():
             page.click('.tabbar [data-tab="confirmed"]')
             cell(page, '2026-12-02').click()
             cf_add()
-            expect(page.locator('[data-cs="ashope"]')).to_contain_text('（10-29）')
             page.click('[data-cs="ashope"]')
             expect(page.locator('[data-cf="chip"][data-key="start"]')).to_have_text('10:00')
             expect(page.locator('[data-cf="chip"][data-key="end"]')).to_have_text('29:00')
@@ -554,12 +578,15 @@ def main():
             cell(page, '2026-12-03').click()
             expect(page.locator('.day-entry')).to_contain_text('休憩30分・一人・時給1,300円')
             expect(page.locator('.day-entry')).to_contain_text('棚卸し')
+            # 基本時給が未設定でも、時給の個別設定（1,300円）がある日は計算される
+            # 19:00-30:00 休憩30分：通常(3h-30分)×1,300 ＋ 深夜7h×1,625 ＝ 4,550 ＋ 11,375
+            expect(page.get_by_test_id('panel-pay')).to_have_text('¥15,925')
         check('CF-05', '入力画面：休憩・一人シフト・時給・メモ、不正値は完了不可', cf_editor)
 
         def cf_unavailable():
             cell(page, '2026-12-04').click()
             cf_add()
-            expect(page.get_by_test_id('sheet-hope')).to_contain_text('×')
+            expect(page.get_by_test_id('sheet-hope')).to_have_count(0)
             expect(page.locator('[data-cs="ashope"]')).to_have_count(0)
             page.locator('.backdrop').click(position={'x': 10, 'y': 10})
         check('CF-06', '希望が×の日は希望どおりボタンを出さない', cf_unavailable)
@@ -621,6 +648,16 @@ def main():
             expect(page.get_by_test_id('cf-wage')).to_have_value('1300')
             page.click('[data-cf="close"]')
         check('CF-10', '確定済みの日は編集画面に現在の値', cf_edit_existing)
+
+        def cf_trash():
+            cell(page, '2026-12-16').click()
+            expect(page.locator('.day-panel .trash-btn')).to_be_visible()
+            page.click('.day-panel .trash-btn')
+            expect(page.get_by_test_id('toast')).to_have_text('確定シフトを削除しました')
+            expect(page.locator('.dialog')).to_have_count(0)
+            expect(cell(page, '2026-12-16').locator('.cal-val.cf')).to_have_count(0)
+            expect(page.locator('.day-panel .trash-btn')).to_have_count(0)
+        check('DEL-C', '確定シフトをゴミ箱で削除（確認なし）', cf_trash)
 
         def cf_multi():
             page.click('[data-action="multi"]')
@@ -702,6 +739,25 @@ def main():
             expect(page.locator('.pay-row')).to_have_count(4)
             page.screenshot(path=OUT / 'v2_12_pay.png', full_page=True)
         check('PAY-02', '給料の設定→見込み給料・内訳・目標・希望の見込み', pay_settings)
+
+        def cf_day_pay():
+            page.click('.tabbar [data-tab="confirmed"]')
+            show_dec()
+            page.click('[data-action="prev"]')  # 11月
+            cell(page, '2026-11-03').click()
+            expect(page.get_by_test_id('panel-pay')).to_have_text('¥15,275')
+            page.click('.day-entry')
+            expect(page.get_by_test_id('cf-pay-yen')).to_have_text('¥15,275')
+            expect(page.get_by_test_id('cf-pay')).to_contain_text('交通費¥420は別')
+            page.click('[data-cf="break"][data-min="0"]')  # 休憩なしにすると通常1h分(1,300円)増える
+            expect(page.get_by_test_id('cf-pay-yen')).to_have_text('¥16,575')
+            page.get_by_test_id('cf-solo').uncheck()  # 一人加算なし：1200×4h ＋ 1500×7h
+            expect(page.get_by_test_id('cf-pay-yen')).to_have_text('¥15,300')
+            page.screenshot(path=OUT / 'v2_14_cf_pay.png')
+            page.click('[data-cf="close"]')
+            expect(page.get_by_test_id('panel-pay')).to_have_text('¥15,275')
+            page.click('.tabbar [data-tab="pay"]')
+        check('PAY-DAY', '確定シフトの詳細にその日の給料（入力に合わせて再計算）', cf_day_pay)
 
         def pay_nav():
             page.click('.pay-nav [data-action="next"]')

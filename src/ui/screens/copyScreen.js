@@ -1,19 +1,20 @@
 // @ts-check
 /** LINE 提出用コピー画面（docs/v2_redesign.md §3.4）。前半・後半を選んでプレビューし、コピーする。 */
 import { el, esc } from '../dom.js';
-import { periodKey, periodOptionsAround, periodShortLabel, periodRangeLabel } from '../../domain/calendar.js';
+import { periodKey, periodShortLabel, periodRangeLabel } from '../../domain/calendar.js';
 
 /** @typedef {ReturnType<typeof import('../../application/controller.js').createController>} Controller */
 /** @typedef {import('../../domain/types.js').PeriodRef} PeriodRef */
 
 /** @param {Controller} c */
 export function openCopyScreen(c) {
+  // 表示中の月の前半・後半だけを選べる（2026-11-27 変更）。提出先の期間がその月にあれば最初から選ぶ
+  const month = c.getState().month;
+  /** @type {PeriodRef[]} */
+  const options = [{ ...month, half: 'first' }, { ...month, half: 'second' }];
+  const def = c.defaultCopyPeriod();
   /** @type {PeriodRef} */
-  let period = c.defaultCopyPeriod();
-  // 候補は「表示中の月の前後」と「初期期間の前後」をあわせた重複なしの一覧
-  const seen = new Map();
-  for (const p of [...periodOptionsAround(c.getState().month), ...periodOptionsAround(period)]) seen.set(periodKey(p), p);
-  const options = [...seen.values()].sort((a, b) => periodKey(a).localeCompare(periodKey(b)));
+  let period = options.find((o) => periodKey(o) === periodKey(def)) ?? options[0];
 
   const page = el(`
     <div class="page-overlay" role="dialog" aria-modal="true" aria-labelledby="copy-title">
@@ -39,7 +40,7 @@ export function openCopyScreen(c) {
       <div class="form-section-title">対象期間 <span class="note">※ 選んだ半月の希望を、LINEに貼る文章にします。</span></div>
       <div class="period-chips" role="radiogroup" aria-label="対象期間">
         ${options.map((p) => `<button type="button" role="radio" class="period-chip" data-cp="period" data-key="${periodKey(p)}"
-            aria-checked="${periodKey(p) === periodKey(period)}">${p.year !== c.getState().month.year ? `<small>${p.year}年</small>` : ''}${esc(periodShortLabel(p))}</button>`).join('')}
+            aria-checked="${periodKey(p) === periodKey(period)}">${esc(periodShortLabel(p))}<small>${esc(periodRangeLabel(p).replace(/^(前半|後半) /, ''))}</small></button>`).join('')}
       </div>
       <div class="form-section-title row-between"><span>プレビュー <span class="note">${esc(`${period.year}年${period.month}月 ${periodRangeLabel(period)}`)}</span></span>
         <span class="count ${filled === lines.length ? 'done' : ''}" data-testid="copy-count">${filled}/${lines.length}日入力済み</span></div>
